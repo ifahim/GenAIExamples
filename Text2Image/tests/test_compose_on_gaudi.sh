@@ -1,3 +1,4 @@
+#!/bin/bash
 # Copyright (C) 2024 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
@@ -13,7 +14,7 @@ WORKPATH=$(dirname "$PWD")
 LOG_PATH="$WORKPATH/tests"
 ip_address=$(hostname -I | awk '{print $1}')
 text2image_service_port=9379
-MODEL=stabilityai/stable-diffusion-2-1
+MODEL=stable-diffusion-v1-5/stable-diffusion-v1-5
 export MODEL=${MODEL}
 
 function build_docker_images() {
@@ -25,7 +26,7 @@ function build_docker_images() {
     docker compose -f build.yaml build ${service_list} --no-cache > ${LOG_PATH}/docker_image_build.log
 }
 
-function start_service() {
+function start_services() {
     cd $WORKPATH/docker_compose/intel/hpu/gaudi
     export no_proxy="localhost,127.0.0.1,"${ip_address}
     # Start Docker Containers
@@ -68,15 +69,27 @@ function stop_docker() {
 
 function main() {
 
+    echo "::group::stop_docker"
     stop_docker
+    echo "::endgroup::"
 
-    build_docker_images
-    start_service
+    echo "::group::build_docker_images"
+    if [[ "$IMAGE_REPO" == "opea" ]]; then build_docker_images; fi
+    echo "::endgroup::"
 
+    echo "::group::start_services"
+    start_services
+    echo "::endgroup::"
+
+    echo "::group::validate_microservice"
     validate_microservice
+    echo "::endgroup::"
 
+    echo "::group::stop_docker"
     stop_docker
-    echo y | docker system prune
+    echo "::endgroup::"
+
+    docker system prune -f
 
 }
 

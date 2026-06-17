@@ -26,14 +26,8 @@ function build_docker_images() {
     docker build --no-cache -t ${REGISTRY}/comps-base:${TAG} --build-arg https_proxy=$https_proxy --build-arg http_proxy=$http_proxy -f Dockerfile .
     popd && sleep 1s
 
-    git clone https://github.com/vllm-project/vllm.git && cd vllm
-    VLLM_VER="v0.8.3"
-    echo "Check out vLLM tag ${VLLM_VER}"
-    git checkout ${VLLM_VER} &> /dev/null
-    cd ../
-
     echo "Build all the images with --no-cache, check docker_image_build.log for details..."
-    service_list="codegen codegen-gradio-ui llm-textgen vllm dataprep retriever embedding"
+    service_list="codegen codegen-ui llm-textgen dataprep retriever embedding"
 
     docker compose -f build.yaml build ${service_list} --no-cache > ${LOG_PATH}/docker_image_build.log
 
@@ -42,13 +36,16 @@ function build_docker_images() {
 }
 
 function start_services() {
-    local compose_profile="$1"
+    local compose_file="$1"
     local llm_container_name="$2"
-
+    export no_proxy="localhost,127.0.0.1,$ip_address"
     cd $WORKPATH/docker_compose/intel/cpu/xeon/
 
+    # download grafana dashboard
+    bash grafana/dashboards/download_opea_dashboard.sh
+
     # Start Docker Containers
-    docker compose --profile ${compose_profile} up -d > ${LOG_PATH}/start_services_with_compose.log
+    docker compose -f ${compose_file} -f compose.monitoring.yaml up -d > ${LOG_PATH}/start_services_with_compose.log
 
     n=0
     until [[ "$n" -ge 100 ]]; do
@@ -138,6 +135,14 @@ function validate_megaservice() {
         "codegen-xeon-backend-server" \
         '{"messages": "def print_hello_world():", "max_tokens": 256}'
 
+    # Curl the Mega Service with stream as false
+    validate_services \
+        "${ip_address}:7778/v1/codegen" \
+        "" \
+        "mega-codegen" \
+        "codegen-xeon-backend-server" \
+        '{ "messages": "def print_hello_world():", "max_tokens": 256, "stream": false}'
+
     # Curl the Mega Service with index_name and agents_flag
     validate_services \
         "${ip_address}:7778/v1/codegen" \
@@ -155,83 +160,43 @@ function validate_megaservice() {
 
 }
 
-function validate_frontend() {
-    cd $WORKPATH/ui/svelte
-    local conda_env_name="OPEA_e2e"
-    export PATH=${HOME}/miniforge3/bin/:$PATH
-    if conda info --envs | grep -q "$conda_env_name"; then
-        echo "$conda_env_name exist!"
-    else
-        conda create -n ${conda_env_name} python=3.12 -y
-    fi
-    source activate ${conda_env_name}
-
-    sed -i "s/localhost/$ip_address/g" playwright.config.ts
-
-    conda install -c conda-forge nodejs=22.6.0 -y
-    npm install && npm ci && npx playwright install --with-deps
-    node -v && npm -v && pip list
-
-    exit_status=0
-    npx playwright test || exit_status=$?
-
-    if [ $exit_status -ne 0 ]; then
-        echo "[TEST INFO]: ---------frontend test failed---------"
-        exit $exit_status
-    else
-        echo "[TEST INFO]: ---------frontend test passed---------"
-    fi
-}
-
-function validate_gradio() {
-    local URL="http://${ip_address}:5173/health"
-    local HTTP_STATUS=$(curl "$URL")
-    local SERVICE_NAME="Gradio"
-
-    if [ "$HTTP_STATUS" = '{"status":"ok"}' ]; then
-        echo "[ $SERVICE_NAME ] HTTP status is 200. UI server is running successfully..."
-    else
-        echo "[ $SERVICE_NAME ] UI server has failed..."
-    fi
-}
-
 function stop_docker() {
-    local docker_profile="$1"
+    local compose_file="$1"
 
     cd $WORKPATH/docker_compose/intel/cpu/xeon/
-    docker compose --profile ${docker_profile} down
+    docker compose -f ${compose_file} -f compose.monitoring.yaml down
 }
 
 function main() {
-    # all docker docker compose profiles for Xeon Platform
-    docker_compose_profiles=("codegen-xeon-tgi" "codegen-xeon-vllm")
+    # all docker docker compose files for Xeon Platform
+    docker_compose_files=("compose_tgi.yaml" "compose.yaml")
     docker_llm_container_names=("tgi-server" "vllm-server")
 
-    # get number of profiels and LLM docker container names
-    len_profiles=${#docker_compose_profiles[@]}
+    # get number of compose files and LLM docker container names
+    len_compose_files=${#docker_compose_files[@]}
     len_containers=${#docker_llm_container_names[@]}
 
-    # number of profiels and docker container names must be matched
-    if [ ${len_profiles} -ne ${len_containers} ]; then
-        echo "Error: number of profiles ${len_profiles} and container names ${len_containers} mismatched"
+    # number of compose files and docker container names must be matched
+    if [ ${len_compose_files} -ne ${len_containers} ]; then
+        echo "Error: number of docker compose files ${len_compose_files} and container names ${len_containers} mismatched"
         exit 1
     fi
 
-    # stop_docker, stop all profiles
-    for ((i = 0; i < len_profiles; i++)); do
-        stop_docker "${docker_compose_profiles[${i}]}"
+    # stop_docker, stop all compose files
+    for ((i = 0; i < len_compose_files; i++)); do
+        stop_docker "${docker_compose_files[${i}]}"
     done
 
     # build docker images
     if [[ "$IMAGE_REPO" == "opea" ]]; then build_docker_images; fi
 
-    # loop all profiles
-    for ((i = 0; i < len_profiles; i++)); do
-        echo "Process [${i}]: ${docker_compose_profiles[$i]}, ${docker_llm_container_names[${i}]}"
+    # loop all compose files
+    for ((i = 0; i < len_compose_files; i++)); do
+        echo "Process [${i}]: ${docker_compose_files[$i]}, ${docker_llm_container_names[${i}]}"
         docker ps -a
 
         echo "::group::start_services"
-        start_services "${docker_compose_profiles[${i}]}" "${docker_llm_container_names[${i}]}"
+        start_services "${docker_compose_files[${i}]}" "${docker_llm_container_names[${i}]}"
         echo "::endgroup::"
 
         echo "::group::validate_microservices"
@@ -242,11 +207,7 @@ function main() {
         validate_megaservice
         echo "::endgroup::"
 
-        echo "::group::validate_gradio"
-        validate_gradio
-        echo "::endgroup::"
-
-        stop_docker "${docker_compose_profiles[${i}]}"
+        stop_docker "${docker_compose_files[${i}]}"
         sleep 5s
     done
 

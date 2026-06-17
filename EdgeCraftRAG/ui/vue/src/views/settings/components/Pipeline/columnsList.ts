@@ -1,0 +1,68 @@
+// Copyright (C) 2025 Intel Corporation
+// SPDX-License-Identifier: Apache-2.0
+
+const getTableColumns = (t: (key: string) => string): TableColumns[] => [
+  {
+    title: t("pipeline.name"),
+    key: "name",
+    dataIndex: "name",
+    fixed: "left",
+    minWidth: 200,
+    visible: true,
+    disabled: true,
+  },
+  {
+    title: t("pipeline.id"),
+    dataIndex: "idx",
+    key: "idx",
+    minWidth: 100,
+    ellipsis: true,
+    visible: true,
+  },
+  {
+    title: t("pipeline.config.retriever"),
+    key: "retriever_type",
+    dataIndex: ["retriever", "retriever_type"],
+    minWidth: 100,
+    visible: true,
+  },
+  {
+    title: t("pipeline.config.postProcessor"),
+    key: "postProcessor",
+    dataIndex: "postProcessor",
+    minWidth: 220,
+    visible: true,
+  },
+  {
+    title: t("pipeline.config.rerank"),
+    key: "rerank",
+    dataIndex: "rerank",
+    minWidth: 180,
+    visible: true,
+  },
+  {
+    title: t("pipeline.config.generatorType"),
+    key: "generator_type",
+    dataIndex: "generator",
+    minWidth: 120,
+    visible: true,
+  },
+  {
+    title: t("pipeline.status"),
+    key: "status",
+    dataIndex: "status",
+    minWidth: 120,
+    visible: true,
+  },
+  {
+    title: t("pipeline.operation"),
+    key: "operation",
+    dataIndex: "operation",
+    fixed: "right",
+    minWidth: 340,
+    visible: true,
+    disabled: true,
+  },
+];
+
+export default getTableColumns;

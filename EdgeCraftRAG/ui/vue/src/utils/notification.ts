@@ -3,12 +3,9 @@
 
 import { CheckCircleFilled, CloseCircleFilled, ExclamationCircleFilled, InfoCircleFilled } from "@ant-design/icons-vue";
 import { notification } from "ant-design-vue";
-interface NotificationIcon {
-  icon: any;
-  color: string;
-}
+import { h } from "vue";
 
-const getNotificationIcon = (type: string): NotificationIcon => {
+const getNotificationIcon = (type: string) => {
   switch (type) {
     case "success":
       return { icon: CheckCircleFilled, color: "--color-success" };
@@ -22,19 +19,18 @@ const getNotificationIcon = (type: string): NotificationIcon => {
       return { icon: null, color: "" };
   }
 };
-
 export const customNotification = (
   type: "success" | "warning" | "error" | "info",
   message: string,
-  description: string,
+  description: string | undefined,
 ) => {
   const { icon, color } = getNotificationIcon(type);
-
   const styledIcon = icon ? h(icon, { style: { color: `var(${color})` } }) : null;
 
   notification[type]({
-    message: message,
-    description: description,
+    message,
+    description,
     icon: styledIcon,
+    duration: 3,
   });
 };

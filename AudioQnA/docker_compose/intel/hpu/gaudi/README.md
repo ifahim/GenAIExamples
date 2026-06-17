@@ -15,12 +15,18 @@ Note: The default LLM is `meta-llama/Meta-Llama-3-8B-Instruct`. Before deploying
 
 This section describes how to quickly deploy and test the AudioQnA service manually on an Intel® Gaudi® processor. The basic steps are:
 
-1. [Access the Code](#access-the-code)
-2. [Configure the Deployment Environment](#configure-the-deployment-environment)
-3. [Deploy the Services Using Docker Compose](#deploy-the-services-using-docker-compose)
-4. [Check the Deployment Status](#check-the-deployment-status)
-5. [Validate the Pipeline](#validate-the-pipeline)
-6. [Cleanup the Deployment](#cleanup-the-deployment)
+- [Deploying AudioQnA on Intel® Gaudi® Processors](#deploying-audioqna-on-intel-gaudi-processors)
+  - [Table of Contents](#table-of-contents)
+  - [AudioQnA Quick Start Deployment](#audioqna-quick-start-deployment)
+    - [Access the Code](#access-the-code)
+    - [Configure the Deployment Environment](#configure-the-deployment-environment)
+    - [Deploy the Services Using Docker Compose](#deploy-the-services-using-docker-compose)
+    - [Check the Deployment Status](#check-the-deployment-status)
+    - [Validate the Pipeline](#validate-the-pipeline)
+    - [Cleanup the Deployment](#cleanup-the-deployment)
+  - [AudioQnA Docker Compose Files](#audioqna-docker-compose-files)
+  - [Validate MicroServices](#validate-microservices)
+  - [Conclusion](#conclusion)
 
 ### Access the Code
 
@@ -43,7 +49,7 @@ To set up environment variables for deploying AudioQnA services, set up some par
 
 ```bash
 export host_ip="External_Public_IP"           # ip address of the node
-export HUGGINGFACEHUB_API_TOKEN="Your_HuggingFace_API_Token"
+export HF_TOKEN="Your_HuggingFace_API_Token"
 export http_proxy="Your_HTTP_Proxy"           # http proxy if any
 export https_proxy="Your_HTTPs_Proxy"         # https proxy if any
 export no_proxy=localhost,127.0.0.1,$host_ip,whisper-service,speecht5-service,vllm-service,tgi-service,audioqna-gaudi-backend-server,audioqna-gaudi-ui-server  # additional no proxies if needed
@@ -78,6 +84,13 @@ Please refer to the table below to build different microservices from source:
 | SPEECHT5     | [SpeechT5 build guide](https://github.com/opea-project/GenAIComps/tree/main/comps/tts/src#211-speecht5-server-image) |
 | MegaService  | [MegaService build guide](../../../../README_miscellaneous.md#build-megaservice-docker-image)                        |
 | UI           | [Basic UI build guide](../../../../README_miscellaneous.md#build-ui-docker-image)                                    |
+
+(Optional) Enabling monitoring using the command:
+
+```bash
+cd docker_compose/intel/hpu/gaudi
+docker compose -f compose.yaml -f compose.monitoring.yaml up -d
+```
 
 ### Check the Deployment Status
 
@@ -126,6 +139,12 @@ To stop the containers associated with the deployment, execute the following com
 
 ```bash
 docker compose -f compose.yaml down
+```
+
+If monitoring is enabled, stop the containers using the following command:
+
+```bash
+docker compose -f compose.yaml -f compose.monitoring.yaml down
 ```
 
 ## AudioQnA Docker Compose Files

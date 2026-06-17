@@ -2,14 +2,16 @@
 
 # Copyright (C) 2024 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
-pushd "../../" > /dev/null
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+pushd "$SCRIPT_DIR/../../../" > /dev/null
 source .set_env.sh
 popd > /dev/null
 
 export HOST_IP=$(hostname -I | awk '{print $1}')
-export HUGGINGFACEHUB_API_TOKEN=${HUGGINGFACEHUB_API_TOKEN}
-if [ -z "${HUGGINGFACEHUB_API_TOKEN}" ]; then
-    echo "Error: HUGGINGFACEHUB_API_TOKEN is not set. Please set HUGGINGFACEHUB_API_TOKEN"
+export HF_TOKEN=${HF_TOKEN}
+if [ -z "${HF_TOKEN}" ]; then
+    echo "Error: HF_TOKEN is not set. Please set HF_TOKEN"
 fi
 
 if [ -z "${HOST_IP}" ]; then
@@ -49,3 +51,9 @@ export DATAPREP_ENDPOINT="http://${HOST_IP}:${DATAPREP_REDIS_PORT}/v1/dataprep"
 export LOGFLAG=false
 export MODEL_CACHE=${model_cache:-"./data"}
 export NUM_CARDS=1
+
+
+# Set network proxy settings
+export no_proxy="${no_proxy},${HOST_IP},vllm-server,codegen-xeon-backend-server,codegen-xeon-ui-server,redis-vector-db,dataprep-redis-server,tei-embedding-serving,tei-embedding-server,retriever-redis,opea_prometheus,grafana,node-exporter,$JAEGER_IP" # Example: no_proxy="localhost, 127.0.0.1, 192.168.1.1"
+export http_proxy=$http_proxy
+export https_proxy=$https_proxy

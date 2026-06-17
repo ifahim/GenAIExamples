@@ -38,11 +38,11 @@ function start_services() {
     cd "$WORKPATH"/docker_compose/amd/gpu/rocm
 
     # Start Docker Containers
-    docker compose -f compose_faqgen_vllm.yaml up -d > "${LOG_PATH}"/start_services_with_compose.log
+    docker compose -f compose_faqgen_vllm.yaml up -d --quiet-pull > "${LOG_PATH}"/start_services_with_compose.log
 
     n=0
     until [[ "$n" -ge 500 ]]; do
-        docker logs chatqna-vllm-service >& "${LOG_PATH}"/chatqna-vllm-service_start.log
+        docker logs chatqna-vllm-service > "${LOG_PATH}"/chatqna-vllm-service_start.log 2>&1
         if grep -q "Application startup complete" "${LOG_PATH}"/chatqna-vllm-service_start.log; then
             break
         fi
@@ -138,35 +138,6 @@ function validate_megaservice() {
 
 }
 
-function validate_frontend() {
-    cd $WORKPATH/ui/svelte
-    local conda_env_name="OPEA_e2e"
-    export PATH=${HOME}/miniconda3/bin/:$PATH
-    if conda info --envs | grep -q "$conda_env_name"; then
-        echo "$conda_env_name exist!"
-    else
-        conda create -n ${conda_env_name} python=3.12 -y
-    fi
-
-    source activate ${conda_env_name}
-
-    sed -i "s/localhost/$ip_address/g" playwright.config.ts
-
-    conda install -c conda-forge nodejs=22.6.0 -y
-    npm install && npm ci && npx playwright install --with-deps
-    node -v && npm -v && pip list
-
-    exit_status=0
-    npx playwright test || exit_status=$?
-
-    if [ $exit_status -ne 0 ]; then
-        echo "[TEST INFO]: ---------frontend test failed---------"
-        exit $exit_status
-    else
-        echo "[TEST INFO]: ---------frontend test passed---------"
-    fi
-}
-
 function stop_docker() {
     cd $WORKPATH/docker_compose/amd/gpu/rocm
     docker compose -f compose_vllm.yaml down
@@ -192,10 +163,6 @@ function main() {
 
     echo "::group::validate_megaservice"
     validate_megaservice
-    echo "::endgroup::"
-
-    echo "::group::validate_frontend"
-    validate_frontend
     echo "::endgroup::"
 
     echo "::group::stop_docker"

@@ -1,108 +1,139 @@
 <template>
-  <div class="pipeline-container">
-    <a-affix :offset-top="450">
-      <div class="setting-icon" @click="jumpPipeline">
-        <SvgIcon
-          name="icon-setting"
-          :size="32"
-          :style="{ color: 'var(--color-big-icon)' }"
-          inherit
+  <div class="chat-container">
+    <a-layout class="content-container">
+      <a-layout-sider :width="expandMenu ? 260 : 60" class="sider-wrap">
+        <div
+          :class="{ 'fold-but': true, 'fold-up': !expandMenu }"
+          @click="expandMenu = !expandMenu"
+        >
+          <DoubleLeftOutlined v-if="expandMenu" class="fold-icon" />
+          <DoubleRightOutlined v-else />
+        </div>
+        <KnowledgeBase
+          v-if="currentMenu == 'knowledge'"
+          @view="handleViewKBDetail"
+          :is-collapsed="!expandMenu"
         />
-        <div>Pipeline</div>
-      </div></a-affix
-    >
-    <!-- system status -->
-    <Header @config="handleConfig" />
-    <!-- chatbot-->
-    <Chatbot :configuration="chatbotConfiguration" />
-    <!-- upload file-->
-    <UploadFile />
-    <!-- config chatbot -->
-    <ConfigDrawer
-      v-if="configDrawer.visible"
-      :drawer-data="configDrawer.data"
-      @close="configDrawer.visible = false"
-      @update="handleUpdateConfiguration"
-    />
+        <ChatHistory v-else :is-collapsed="!expandMenu" />
+      </a-layout-sider>
+      <a-layout-content>
+        <keep-alive>
+          <component
+            :is="currentComponent"
+            class="body-wrap"
+            :kb-info="kbInfo"
+            @back="handleBack"
+          />
+        </keep-alive>
+      </a-layout-content>
+    </a-layout>
   </div>
 </template>
 
 <script lang="ts" setup name="Chatbot">
-import router from "@/router";
-import { chatbotAppStore } from "@/store/chatbot";
-import { onMounted, reactive } from "vue";
-import { Chatbot, ConfigDrawer, Header, UploadFile } from "./components";
-import { ConfigType } from "./type";
+  import { DoubleLeftOutlined, DoubleRightOutlined } from "@ant-design/icons-vue";
+  import { computed } from "vue";
+  import { Chatbot, ChatHistory, DetailComponent, KnowledgeBase } from "./components";
 
-const chatbotStore = chatbotAppStore();
+  const route = useRoute();
 
-let chatbotConfiguration = reactive<ConfigType>({
-  top_n: 5,
-  temperature: 0.1,
-  top_p: 1,
-  top_k: 50,
-  repetition_penalty: 1.1,
-  max_tokens: 512,
-  stream: true,
-});
-const configDrawer = reactive<DialogType>({
-  visible: false,
-  data: {},
-});
+  const currentMenu = ref<string>("chat");
+  const currentPage = ref<string>("chat");
+  const expandMenu = ref<boolean>(true);
+  let kbInfo = reactive<EmptyObjectType>({});
 
-const handleConfig = () => {
-  configDrawer.visible = true;
-  configDrawer.data = chatbotConfiguration;
-};
-//Jump Pipeline
-const jumpPipeline = () => {
-  router.push("/pipeline");
-};
-const handleUpdateConfiguration = (configuration: ConfigType) => {
-  chatbotConfiguration = {
-    ...chatbotConfiguration,
-    ...configuration,
+  const componentList = ref<EmptyArrayType>([
+    {
+      label: "chat.title",
+      id: "chat",
+      icon: "icon-chat",
+      component: markRaw(Chatbot),
+    },
+    {
+      label: "knowledge.title",
+      id: "knowledge",
+      icon: "icon-knowledge",
+      component: markRaw(DetailComponent),
+    },
+  ]);
+
+  const currentComponent = computed(() => {
+    return componentList.value.find(item => item.id === currentPage.value)?.component;
+  });
+
+  const handleViewKBDetail = (row: EmptyObjectType) => {
+    Object.assign(kbInfo, row);
+
+    if (kbInfo.name) currentPage.value = "knowledge";
+    else currentPage.value = "chat";
   };
-  chatbotStore.setChatbotConfiguration(configuration);
-};
-onMounted(() => {
-  if (chatbotStore?.configuration)
-    chatbotConfiguration = {
-      ...chatbotConfiguration,
-      ...chatbotStore.configuration,
-    };
-});
+  const handleBack = () => {
+    currentPage.value = "chat";
+  };
+
+  watch(
+    () => route,
+    route => {
+      if (route.query?.type === "kb") {
+        currentMenu.value = "knowledge";
+      } else {
+        currentMenu.value = "chat";
+        currentPage.value = "chat";
+      }
+    },
+    { immediate: true, deep: true }
+  );
+  watch(
+    () => currentMenu.value,
+    value => {
+      if (value) expandMenu.value = true;
+    }
+  );
 </script>
 
 <style scoped lang="less">
-.pipeline-container {
-  position: relative;
-
-  .setting-icon {
-    padding: 12px 8px;
-    position: absolute;
-    transform: translateY(-50%);
-    top: 40%;
-    left: -80px;
-    z-index: 99;
-    background-color: var(--bg-content-color);
-    box-shadow: 0px 2px 4px 0px var(--bg-box-shadow);
-    border-radius: 6px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--font-main-color);
+  .chat-container {
+    position: relative;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    .intel-layout.intel-layout-has-sider {
+      height: 100%;
+      background-color: transparent;
+      .intel-layout-content {
+        overflow: auto;
+      }
+      .intel-layout-sider {
+        background-color: transparent;
+      }
+    }
+  }
+  .sider-wrap {
+    position: relative;
     &:hover {
-      color: var(--color-primary);
+      .fold-icon {
+        display: block;
+      }
+    }
+    .fold-but {
+      position: absolute;
+      top: 50%;
+      right: -30px;
+      cursor: pointer;
+      z-index: 99;
+      font-size: 20px;
+      width: 40px;
+      height: 50px;
+      padding: 12px 0;
+      text-align: end;
+      color: var(--font-tip-color);
+      &.fold-up {
+        right: -20px;
+      }
+    }
+    .fold-icon {
+      display: none;
+      font-weight: 600;
     }
   }
-  @media (max-width: 1100px) {
-    .setting-icon {
-      left: 0;
-    }
-  }
-}
 </style>

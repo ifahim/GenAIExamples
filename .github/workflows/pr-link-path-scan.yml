@@ -19,17 +19,19 @@ jobs:
         run: sudo rm -rf ${{github.workspace}}/*
 
       - name: Checkout Repo GenAIExamples
-        uses: actions/checkout@v4
+        uses: actions/checkout@1e31de5234b9f8995739874a8ce0492dc87873e2
         with:
           fetch-depth: 0
 
       - name: Check the Validity of Hyperlinks
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           cd ${{github.workspace}}
           delay=1
           fail="FALSE"
           merged_commit=$(git log -1 --format='%H')
-          changed_files="$(git diff --name-status --diff-filter=ARM ${{ github.event.pull_request.base.sha }} ${merged_commit} | awk '/\.md$/ {print $NF}')"
+          changed_files="$(git diff --name-status --diff-filter=ARM $BASE_SHA ${merged_commit} | awk '/\.md$/ {print $NF}')"
           if  [ -n "$changed_files" ]; then
             for changed_file in $changed_files; do
               # echo $changed_file
@@ -39,19 +41,25 @@ jobs:
                   # echo $url_line
                   url=$(echo "$url_line"|cut -d '(' -f2 | cut -d ')' -f1|sed 's/\.git$//')
                   path=$(echo "$url_line"|cut -d':' -f1 | cut -d'/' -f2-)
-                  if [[ "$url" == "https://platform.openai.com/api-keys"* ]]; then
+                  if [[ "$url" == "https://platform.openai.com/api-keys"* || "$url" == "https://ai.cloud.intel.com/" ]]; then
                     echo "Link "$url" from ${{github.workspace}}/$path needs to be verified by a real person."
                   else
                     sleep $delay
-                    response=$(curl -L -s -o /dev/null -w "%{http_code}" "$url")|| true
+                    response=$(curl -L -s -o /dev/null -w "%{http_code}" -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"   -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"   -H "Accept-Language: en-US,en;q=0.5" "$url")|| true
                     if [ "$response" -ne 200 ]; then
-                      echo "**********Validation failed ($response), try again**********"
+                      echo "**********Validation $url failed ($response), try again**********"
                       response_retry=$(curl -s -o /dev/null -w "%{http_code}" "$url")
                       if [ "$response_retry" -eq 200 ]; then
                         echo "*****Retry successfully*****"
                       else
-                        echo "Invalid link ($response_retry) from ${{github.workspace}}/$path: $url"
-                        fail="TRUE"
+                        echo "******Retry $url failed ($response_retry), add simulated browser requests******"
+                        response_browser=$(curl -s -o /dev/null -w "%{http_code}" -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"   -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"   -H "Accept-Language: en-US,en;q=0.5" "$url")
+                        if [ "$response_browser" -eq 200 ]; then
+                          echo "*****Retry successfully*****"
+                        else
+                          echo -e "::error:: Invalid link ($response_retry) from ${{github.workspace}}/$(echo "$url_line"|cut -d':' -f1): $url"
+                          fail="TRUE"
+                        fi
                       fi
                     fi
                   fi
@@ -76,20 +84,23 @@ jobs:
         run: sudo rm -rf ${{github.workspace}}/*
 
       - name: Checkout Repo GenAIExamples
-        uses: actions/checkout@v4
+        uses: actions/checkout@1e31de5234b9f8995739874a8ce0492dc87873e2
         with:
           fetch-depth: 0
 
       - name: Checking Relative Path Validity
+        env:
+          REPO_NAME: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           cd ${{github.workspace}}
           delay=1
           fail="FALSE"
-          repo_name=${{ github.event.pull_request.head.repo.full_name }}
-          branch="https://github.com/$repo_name/blob/${{ github.event.pull_request.head.ref }}"
+          branch="https://github.com/$REPO_NAME/blob/$HEAD_REF"
 
           merged_commit=$(git log -1 --format='%H')
-          changed_files="$(git diff --name-status --diff-filter=ARM ${{ github.event.pull_request.base.sha }} ${merged_commit} | awk '/\.md$/ {print $NF}')"
+          changed_files="$(git diff --name-status --diff-filter=ARM $BASE_SHA ${merged_commit} | awk '/\.md$/ {print $NF}')"
           png_lines=$(grep -Eo '\]\([^)]+\)' --include='*.md' -r .|grep -Ev 'http')
           if [ -n "$png_lines" ]; then
             for png_line in $png_lines; do
@@ -123,7 +134,7 @@ jobs:
                       if [ "$response_retry" -eq 200 ]; then
                         echo "*****Retry successfully*****"
                       else
-                        echo "Invalid path ($response_retry) from ${{github.workspace}}/$refer_path: $png_path"
+                        echo -e "::error:: Invalid path ($response_retry) from ${{github.workspace}}/$refer_path: $png_path"
                         fail="TRUE"
                       fi
                     else
@@ -132,7 +143,7 @@ jobs:
                   fi
                 fi
               else
-                echo "${{github.workspace}}/$refer_path:$png_path does not exist"
+                echo -e "::error:: ${{github.workspace}}/$refer_path:$png_path does not exist"
                 fail="TRUE"
               fi
             done

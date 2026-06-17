@@ -18,6 +18,7 @@ class RerankProcessor(BaseComponent):
         )
         self.model = rerank_model
         self.top_n = top_n
+        self.default_top_n = top_n
 
     def run(self, **kwargs) -> Any:
         self.model.top_n = self.top_n
@@ -60,5 +61,5 @@ class MetadataReplaceProcessor(BaseComponent, MetadataReplacementPostProcessor):
 
     @model_serializer
     def ser_model(self):
-        set = {"idx": self.idx, "processor_type": self.comp_subtype, "model": None, "top_n": None}
+        set = {"idx": self.idx, "processor_type": self.comp_subtype, "top_n": None}
         return set

@@ -14,7 +14,7 @@ export MODEL_CACHE=${model_cache:-"/var/lib/GenAI/data"}
 WORKPATH=$(dirname "$PWD")
 LOG_PATH="$WORKPATH/tests"
 ip_address=$(hostname -I | awk '{print $1}')
-export PATH="~/miniconda3/bin:$PATH"
+export PATH="$HOME/miniconda3/bin:$PATH"
 
 function build_docker_images() {
     opea_branch=${opea_branch:-"main"}
@@ -35,6 +35,7 @@ function build_docker_images() {
 
 function start_services() {
     cd $WORKPATH/docker_compose/amd/gpu/rocm/
+    export no_proxy="localhost,127.0.0.1,$ip_address"
     source set_env.sh
     # Start Docker Containers
     docker compose up -d > ${LOG_PATH}/start_services_with_compose.log

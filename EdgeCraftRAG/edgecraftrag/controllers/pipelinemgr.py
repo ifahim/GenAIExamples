@@ -2,25 +2,32 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import json
 import gc
-from typing import Any, List
-
+from typing import Any
+from openvino import Core, Type
 from comps.cores.proto.api_protocol import ChatCompletionRequest
-from edgecraftrag.base import BaseMgr, CallbackType
+from edgecraftrag.base import BaseMgr, CallbackType, InferenceType
 from edgecraftrag.components.pipeline import Pipeline
-from edgecraftrag.controllers.nodemgr import NodeMgr
-from llama_index.core.schema import Document
+from edgecraftrag.components.knowledge_base import Knowledge
 
 
 class PipelineMgr(BaseMgr):
 
     def __init__(self):
         self._active_pipeline = None
+        self._prev_active_pipeline_name = None
         self._lock = asyncio.Lock()
         super().__init__()
 
-    def create_pipeline(self, name: str, origin_json: str):
-        pl = Pipeline(name, origin_json)
+    def create_pipeline(self, request, origin_json: str):
+        if isinstance(request, str):
+            name = request
+            idx = None
+        else:
+            name = request.name
+            idx = request.idx
+        pl = Pipeline(name, origin_json, idx)
         self.add(pl)
         return pl
 
@@ -36,26 +43,62 @@ class PipelineMgr(BaseMgr):
             raise Exception("Pipeline not found...")
         if pl.status.active:
             raise Exception("Unable to remove an active pipeline...")
-        pl.node_parser = None
-        pl.indexer = None
-        pl.retriever = None
+        if self._prev_active_pipeline_name and pl.name == self._prev_active_pipeline_name:
+            raise Exception("Pipeline is currently cached, unable to remove...")
+        pl.retrievers = None
+        if pl.postprocessor != None:
+            for post in pl.postprocessor:
+                try:
+                    post.model._model.clear_requests()
+                except Exception as e:
+                    pass
+                try:
+                    del post.model._model
+                    post.model._model=None
+                except Exception as e:
+                    pass
+                try:
+                    del post.model._ov_pipe
+                except Exception as e:
+                    pass
+                post.model=None
+                post=None
         pl.postprocessor = None
+        for gen in pl.generator:
+            if gen.inference_type:
+                if gen.inference_type == InferenceType.VLLM:
+                    continue
+                else:
+                    llm_model = gen.llm()
+                    if llm_model:
+                        try:
+                            llm_model._model.finish_chat()
+                        except Exception as e:
+                            pass
+                        try:
+                            del llm_model._model
+                            del llm_model._pipe
+                        except Exception as e:
+                            pass
+                        llm_model._model=None
+                        del llm_model
+                del gen
         pl.generator = None
         pl.benchmark = None
         pl.status = None
         pl.run_pipeline_cb = None
         pl.run_retriever_cb = None
-        pl.run_data_prepare_cb = None
-        pl._node_changed = None
         self.remove(pl.idx)
         del pl
         gc.collect()
         return "Pipeline removed successfully"
 
-    def get_pipelines(self):
+    def get_pipelines(self, gen_type: str = None):
+        if gen_type:
+            return [pl for _, pl in self.components.items() if (pl.get_generator(gen_type) is not None)]
         return [pl for _, pl in self.components.items()]
 
-    def activate_pipeline(self, name: str, active: bool, nm: NodeMgr):
+    def activate_pipeline(self, name: str, active: bool, active_kbs: list[Knowledge], cache_prev: bool = False):
         pl = self.get_pipeline_by_name_or_id(name)
         if pl is None:
             return
@@ -65,42 +108,54 @@ class PipelineMgr(BaseMgr):
             self._active_pipeline = None
             return
 
-        nodelist = None
-        if pl.node_changed:
-            nodelist = nm.get_nodes(pl.node_parser.idx)
-        pl.check_active(nodelist)
+        # update activate indexers for pipeline retriever
+        pl.update_retriever_list(active_kbs)
+
+        # set previous active pipeline to inactive
         prevactive = self._active_pipeline
         if prevactive:
             prevactive.status.active = False
             prevactive.update_pipeline_json({"active": prevactive.status.active})
+            if cache_prev:
+                self._prev_active_pipeline_name = prevactive.name
         pl.status.active = True
         self._active_pipeline = pl
 
     def get_active_pipeline(self) -> Pipeline:
         return self._active_pipeline
 
-    def notify_node_change(self):
-        for _, pl in self.components.items():
-            pl.set_node_change()
+    def get_prev_active_pipeline_name(self) -> str:
+        return self._prev_active_pipeline_name
 
-    def run_pipeline(self, chat_request: ChatCompletionRequest) -> Any:
+    def clear_prev_active_pipeline_name(self):
+        self._prev_active_pipeline_name = None
+
+    async def run_pipeline(self, chat_request: ChatCompletionRequest) -> Any:
+        ap = self.get_active_pipeline()
+        if ap is not None:
+            return await ap.run(cbtype=CallbackType.PIPELINE, chat_request=chat_request)
+        return -1
+
+    async def run_retrieve_postprocess(self, chat_request: ChatCompletionRequest) -> Any:
         ap = self.get_active_pipeline()
         out = None
         if ap is not None:
-            out = ap.run(cbtype=CallbackType.PIPELINE, chat_request=chat_request)
+            out = await ap.run(cbtype=CallbackType.RETRIEVE_POSTPROCESS, chat_request=chat_request)
             return out
         return -1
 
-    def run_retrieve(self, chat_request: ChatCompletionRequest) -> Any:
+    async def run_retrieve(self, chat_request: ChatCompletionRequest) -> Any:
         ap = self.get_active_pipeline()
         out = None
         if ap is not None:
-            out = ap.run(cbtype=CallbackType.RETRIEVE, chat_request=chat_request)
+            out = await ap.run(cbtype=CallbackType.RETRIEVE, chat_request=chat_request)
             return out
         return -1
 
-    def run_data_prepare(self, docs: List[Document]) -> Any:
+    async def run_postprocess(self, chat_request: ChatCompletionRequest, contexts) -> Any:
         ap = self.get_active_pipeline()
+        out = None
         if ap is not None:
-            return ap.run(cbtype=CallbackType.DATAPREP, docs=docs)
+            out = await ap.run(cbtype=CallbackType.POSTPROCESS, chat_request=chat_request, contexts=contexts)
+            return out
         return -1

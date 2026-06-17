@@ -13,13 +13,26 @@ This example includes the following sections:
 
 This section describes how to quickly deploy and test the DocSum service manually on an Intel Xeon platform. The basic steps are:
 
-1. [Access the Code](#access-the-code)
-2. [Generate a HuggingFace Access Token](#generate-a-huggingface-access-token)
-3. [Configure the Deployment Environment](#configure-the-deployment-environment)
-4. [Deploy the Services Using Docker Compose](#deploy-the-services-using-docker-compose)
-5. [Check the Deployment Status](#check-the-deployment-status)
-6. [Test the Pipeline](#test-the-pipeline)
-7. [Cleanup the Deployment](#cleanup-the-deployment)
+- [Example DocSum deployments on Intel Xeon Processor](#example-docsum-deployments-on-intel-xeon-processor)
+  - [DocSum Quick Start Deployment](#docsum-quick-start-deployment)
+    - [Access the Code and Set Up Environment](#access-the-code-and-set-up-environment)
+    - [Generate a HuggingFace Access Token](#generate-a-huggingface-access-token)
+    - [Deploy the Services Using Docker Compose](#deploy-the-services-using-docker-compose)
+      - [Option #1](#option-1)
+      - [Option #2](#option-2)
+    - [Check the Deployment Status](#check-the-deployment-status)
+    - [Test the Pipeline](#test-the-pipeline)
+    - [Cleanup the Deployment](#cleanup-the-deployment)
+  - [DocSum Docker Compose Files](#docsum-docker-compose-files)
+    - [Running LLM models with remote endpoints](#running-llm-models-with-remote-endpoints)
+  - [DocSum Detailed Usage](#docsum-detailed-usage)
+    - [Query with text](#query-with-text)
+    - [Query with audio and video](#query-with-audio-and-video)
+    - [Query with long context](#query-with-long-context)
+  - [Launch the UI](#launch-the-ui)
+    - [Gradio UI](#gradio-ui)
+    - [Launch the Svelte UI](#launch-the-svelte-ui)
+    - [Launch the React UI (Optional)](#launch-the-react-ui-optional)
 
 ### Access the Code and Set Up Environment
 
@@ -28,10 +41,12 @@ Clone the GenAIExample repository and access the ChatQnA Intel Xeon platform Doc
 ```bash
 git clone https://github.com/opea-project/GenAIExamples.git
 cd GenAIExamples/DocSum/docker_compose
-source intel/set_env.sh
+source intel/cpu/xeon/set_env.sh
 ```
 
-NOTE: by default vLLM does "warmup" at start, to optimize its performance for the specified model and the underlying platform, which can take long time. For development (and e.g. autoscaling) it can be skipped with `export VLLM_SKIP_WARMUP=true`.
+> NOTE: by default vLLM does "warmup" at start, to optimize its performance for the specified model and the underlying platform, which can take long time. For development (and e.g. autoscaling) it can be skipped with `export VLLM_SKIP_WARMUP=true`.
+
+> NOTE: If any port on your local machine is occupied (like `9000/8008/8888`, etc.), modify it in `set_env.sh`, then run `source set_env.sh` again.
 
 Checkout a released version, such as v1.3:
 
@@ -45,11 +60,24 @@ Some HuggingFace resources, such as some models, are only accessible if you have
 
 ### Deploy the Services Using Docker Compose
 
+#### Option #1
+
 To deploy the DocSum services, execute the `docker compose up` command with the appropriate arguments. For a default deployment, execute:
 
 ```bash
 cd intel/cpu/xeon/
 docker compose up -d
+```
+
+#### Option #2
+
+> NOTE : To enable monitoring, `compose.monitoring.yaml` file need to be merged along with default `compose.yaml` file.
+
+To deploy with monitoring:
+
+```bash
+cd intel/cpu/xeon/
+docker compose -f compose.yaml -f compose.monitoring.yaml up -d
 ```
 
 **Note**: developers should build docker image from source when:
@@ -107,16 +135,47 @@ To stop the containers associated with the deployment, execute the following com
 docker compose -f compose.yaml down
 ```
 
+If mornitoring is enabled, execute the following command:
+
+```bash
+cd intel/cpu/xeon/
+docker compose -f compose.yaml -f compose.monitoring.yaml down
+```
+
 All the DocSum containers will be stopped and then removed on completion of the "down" command.
 
 ## DocSum Docker Compose Files
 
 In the context of deploying a DocSum pipeline on an Intel® Xeon® platform, we can pick and choose different large language model serving frameworks. The table below outlines the various configurations that are available as part of the application.
 
-| File                                   | Description                                                                               |
-| -------------------------------------- | ----------------------------------------------------------------------------------------- |
-| [compose.yaml](./compose.yaml)         | Default compose file using vllm as serving framework                                      |
-| [compose_tgi.yaml](./compose_tgi.yaml) | The LLM serving framework is TGI. All other configurations remain the same as the default |
+| File                                                 | Description                                                                            |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [compose.yaml](./compose.yaml)                       | Default compose file using vllm as serving framework                                   |
+| [compose_tgi.yaml](./compose_tgi.yaml)               | The LLM serving framework is TGI. All other configurations remain the same as default  |
+| [compose_remote.yaml](./compose_remote.yaml)         | Uses remote inference endpoints for LLMs. All other configurations are same as default |
+| [compose.monitoring.yaml](./compose.monitoring.yaml) | Helper file for monitoring features. Can be used along with any compose files          |
+
+### Running LLM models with remote endpoints
+
+When models are deployed on a remote server, a base URL and an API key are required to access them. To set up a remote server and acquire the base URL and API key, refer to [Intel® AI for Enterprise Inference](https://www.intel.com/content/www/us/en/developer/topic-technology/artificial-intelligence/enterprise-inference.html) offerings.
+
+Set the following environment variables.
+
+- `REMOTE_ENDPOINT` is the HTTPS endpoint of the remote server with the model of choice (i.e. https://api.example.com). **Note:** If the API for the models does not use LiteLLM, the second part of the model card needs to be appended to the URL. For example, set `REMOTE_ENDPOINT` to https://api.example.com/Llama-3.3-70B-Instruct if the model card is `meta-llama/Llama-3.3-70B-Instruct`.
+- `API_KEY` is the access token or key to access the model(s) on the server.
+- `LLM_MODEL_ID` is the model card which may need to be overwritten depending on what it is set to `set_env.sh`.
+
+```bash
+export REMOTE_ENDPOINT=<https-endpoint-of-remote-server>
+export API_KEY=<your-api-key>
+export LLM_MODEL_ID=<model-card>
+```
+
+After setting these environment variables, run `docker compose` with `compose_remote.yaml`:
+
+```bash
+docker compose -f compose_remote.yaml up -d
+```
 
 ## DocSum Detailed Usage
 

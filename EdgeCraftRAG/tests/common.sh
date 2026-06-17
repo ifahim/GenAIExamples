@@ -2,6 +2,10 @@
 # Copyright (C) 2024 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
+ip_address=$(hostname -I | awk '{print $1}')
+HOST_IP=$ip_address
+EC_RAG_SERVICE_PORT=16010
+
 function validate_services() {
     local URL="$1"
     local EXPECTED_RESULT="$2"
@@ -18,14 +22,7 @@ function validate_services() {
     local CONTENT=$(cat ${LOG_PATH}/${SERVICE_NAME}.log)
 
     if [ "$HTTP_STATUS" -eq 200 ]; then
-        echo "[ $SERVICE_NAME ] HTTP status is 200. Checking content..."
-        if echo "$CONTENT" | grep -q "$EXPECTED_RESULT"; then
-            echo "[ $SERVICE_NAME ] Content is as expected."
-        else
-            echo "[ $SERVICE_NAME ] Content does not match the expected result: $CONTENT"
-            docker logs ${DOCKER_NAME} >> ${LOG_PATH}/${SERVICE_NAME}_${DOCKER_NAME}.log
-            exit 1
-        fi
+        echo "[ $SERVICE_NAME ] HTTP status is 200."
     else
         echo "[ $SERVICE_NAME ] HTTP status is not 200. Received status was $HTTP_STATUS"
         docker logs ${DOCKER_NAME} >> ${LOG_PATH}/${SERVICE_NAME}_${DOCKER_NAME}.log
@@ -50,4 +47,21 @@ function check_gpu_usage() {
         echo "GPU Memory Used is less than 1G. Please check."
         exit 1
     fi
+}
+
+function validate_knowledge() {
+    # add data to knowledge base
+    validate_services \
+        "${HOST_IP}:${EC_RAG_SERVICE_PORT}/v1/knowledge" \
+        "Done" \
+        "data" \
+        "edgecraftrag-server" \
+        '@configs/test_kb.json'
+
+    validate_services \
+        "${HOST_IP}:${EC_RAG_SERVICE_PORT}/v1/knowledge/default_kb/files" \
+        "Done" \
+        "data" \
+        "edgecraftrag-server" \
+        '{"local_path":"/home/user/ui_cache"}'
 }

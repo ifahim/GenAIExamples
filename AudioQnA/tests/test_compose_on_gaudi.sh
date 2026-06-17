@@ -25,14 +25,8 @@ function build_docker_images() {
     docker build --no-cache -t ${REGISTRY}/comps-base:${TAG} --build-arg https_proxy=$https_proxy --build-arg http_proxy=$http_proxy -f Dockerfile .
     popd && sleep 1s
 
-    git clone https://github.com/HabanaAI/vllm-fork.git
-    cd vllm-fork/
-    VLLM_FORK_VER=v0.6.6.post1+Gaudi-1.20.0
-    echo "Check out vLLM tag ${VLLM_FORK_VER}"
-    git checkout ${VLLM_FORK_VER} &> /dev/null && cd ../
-
     echo "Build all the images with --no-cache, check docker_image_build.log for details..."
-    service_list="audioqna audioqna-ui whisper-gaudi speecht5-gaudi vllm-gaudi"
+    service_list="audioqna audioqna-ui whisper-gaudi speecht5-gaudi"
     docker compose -f build.yaml build ${service_list} --no-cache > ${LOG_PATH}/docker_image_build.log
 
     docker images && sleep 1s
@@ -41,14 +35,15 @@ function build_docker_images() {
 function start_services() {
     cd $WORKPATH/docker_compose/intel/hpu/gaudi
     export host_ip=${ip_address}
+    export no_proxy="localhost,127.0.0.1,$ip_address"
     source set_env.sh
     # sed -i "s/backend_address/$ip_address/g" $WORKPATH/ui/svelte/.env
 
     # Start Docker Containers
-    docker compose up -d > ${LOG_PATH}/start_services_with_compose.log
+    docker compose -f compose.yaml -f compose.monitoring.yaml up -d > ${LOG_PATH}/start_services_with_compose.log
     n=0
     until [[ "$n" -ge 200 ]]; do
-       docker logs vllm-gaudi-service > $LOG_PATH/vllm_service_start.log 2>&1
+       docker logs vllm-gaudi-service 2>&1| tee $LOG_PATH/vllm_service_start.log
        if grep -q complete $LOG_PATH/vllm_service_start.log; then
            break
        fi
@@ -58,8 +53,8 @@ function start_services() {
 
     n=0
     until [[ "$n" -ge 100 ]]; do
-       docker logs whisper-service > $LOG_PATH/whisper_service_start.log
-       if grep -q "Uvicorn server setup on port" $LOG_PATH/whisper_service_start.log; then
+       docker logs whisper-service 2>&1| tee $LOG_PATH/whisper_service_start.log
+       if grep -q "Uvicorn running on" $LOG_PATH/whisper_service_start.log; then
            break
        fi
        sleep 5s
@@ -70,16 +65,15 @@ function start_services() {
 
 function validate_megaservice() {
     response=$(http_proxy="" curl http://${ip_address}:3008/v1/audioqna -XPOST -d '{"audio": "UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA", "max_tokens":64}' -H 'Content-Type: application/json')
-    # always print the log
-    docker logs whisper-service > $LOG_PATH/whisper-service.log
-    docker logs speecht5-service > $LOG_PATH/tts-service.log
-    docker logs vllm-gaudi-service > $LOG_PATH/vllm-gaudi-service.log
-    docker logs audioqna-gaudi-backend-server > $LOG_PATH/audioqna-gaudi-backend-server.log
     echo "$response" | sed 's/^"//;s/"$//' | base64 -d > speech.mp3
 
     if [[ $(file speech.mp3) == *"RIFF"* ]]; then
         echo "Result correct."
     else
+        docker logs whisper-service > $LOG_PATH/whisper-service.log
+        docker logs speecht5-service > $LOG_PATH/tts-service.log
+        docker logs vllm-gaudi-service > $LOG_PATH/vllm-gaudi-service.log
+        docker logs audioqna-gaudi-backend-server > $LOG_PATH/audioqna-gaudi-backend-server.log
         echo "Result wrong."
         exit 1
     fi
@@ -87,7 +81,7 @@ function validate_megaservice() {
 
 function stop_docker() {
     cd $WORKPATH/docker_compose/intel/hpu/gaudi
-    docker compose -f compose.yaml stop && docker compose rm -f
+    docker compose -f compose.yaml -f compose.monitoring.yaml down
 }
 
 function main() {

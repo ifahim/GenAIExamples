@@ -2,26 +2,112 @@
 # SPDX-License-Identifier: Apache-2.0
 
 services:
-  server:
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.5
+    restart: always
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+      - no_proxy=${no_proxy:-127.0.0.1,localhost},172.16.0.0/12,172.19.0.0/16,etcd,minio,milvus-standalone,milvus-minio,milvus-etcd,ipex-llm-serving-xpu-770
+      - NO_PROXY=${NO_PROXY:-127.0.0.1,localhost},172.16.0.0/12,172.19.0.0/16,etcd,minio,milvus-standalone,milvus-minio,milvus-etcd,ipex-llm-serving-xpu-770
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-${PWD}}/volumes/etcd:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    deploy:
+      replicas: ${MILVUS_ENABLED:-0}
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    restart: always
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      no_proxy: ${no_proxy:-127.0.0.1,localhost,172.16.0.0/12},172.19.0.0/16,etcd,minio,milvus-standalone,milvus-minio,milvus-etcd,ipex-llm-serving-xpu-770
+      NO_PROXY: ${NO_PROXY:-127.0.0.1,localhost,172.16.0.0/12},172.19.0.0/16,etcd,minio,milvus-standalone,milvus-minio,milvus-etcd,ipex-llm-serving-xpu-770
+    ports:
+      - "${MINIO_PORT1:-5044}:9001"
+      - "${MINIO_PORT2:-5043}:9000"
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-${PWD}}/volumes/minio:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    deploy:
+      replicas: ${MILVUS_ENABLED:-0}
+  milvus-standalone:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.4.6
+    restart: always
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      no_proxy: ${no_proxy:-127.0.0.1,localhost},172.16.0.0/12,172.19.0.0/16,etcd,minio,milvus-standalone,milvus-minio,milvus-etcd,ipex-llm-serving-xpu-770
+      NO_PROXY: ${NO_PROXY:-127.0.0.1,localhost},172.16.0.0/12,172.19.0.0/16,etcd,minio,milvus-standalone,milvus-minio,milvus-etcd,ipex-llm-serving-xpu-770
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      http_proxy: ${http_proxy:-}
+      https_proxy: ${https_proxy:-}
+    volumes:
+      - ./milvus-config.yaml:/milvus/configs/milvus.yaml
+      - ${DOCKER_VOLUME_DIRECTORY:-${PWD}}/volumes/milvus:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    ports:
+      - "19530:19530"
+      - "${MILVUS_STANDALONE_PORT:-9091}:9091"
+    depends_on:
+      - "etcd"
+      - "minio"
+    deploy:
+      replicas: ${MILVUS_ENABLED:-0}
+  edgecraftrag-server:
     image: ${REGISTRY:-opea}/edgecraftrag-server:${TAG:-latest}
     container_name: edgecraftrag-server
     environment:
-      no_proxy: ${no_proxy}
+      no_proxy: ${no_proxy:-127.0.0.1,localhost},172.16.0.0/12,172.19.0.0/16,etcd,minio,milvus-standalone,milvus-minio,milvus-etcd,ipex-llm-serving-xpu-770
+      NO_PROXY: ${NO_PROXY:-127.0.0.1,localhost},172.16.0.0/12,172.19.0.0/16,etcd,minio,milvus-standalone,milvus-minio,milvus-etcd,ipex-llm-serving-xpu-770
       http_proxy: ${http_proxy}
       https_proxy: ${https_proxy}
-      HF_ENDPOINT: ${HF_ENDPOINT}
-      vLLM_ENDPOINT: ${vLLM_ENDPOINT}
+      vLLM_ENDPOINT: ${vLLM_ENDPOINT:-http://${HOST_IP}:${VLLM_SERVICE_PORT_B60:-8086}}
+      OVMS_ENDPOINT: ${OVMS_ENDPOINT:-http://${HOST_IP}:${OVMS_SERVICE_PORT:-8000}}
+      LLM_MODEL: ${LLM_MODEL}
       ENABLE_BENCHMARK: ${ENABLE_BENCHMARK:-false}
+      MAX_MODEL_LEN: ${MAX_MODEL_LEN:-49152}
+      CHAT_HISTORY_ROUND: ${CHAT_HISTORY_ROUND:-0}
+      METADATA_DATABASE_URL: ${METADATA_DATABASE_URL:-""}
+      GPU_MEMORY_UTIL: ${GPU_MEMORY_UTIL:-0.8}
+      VLLM_AFFINITY_MASK: ${ZE_AFFINITY_MASK:-0}
+      ENABLE_GENAI: ${ENABLE_GENAI:-false}
+      TP: ${TP:-1}
     volumes:
       - ${MODEL_PATH:-${PWD}}:/home/user/models
       - ${DOC_PATH:-${PWD}}:/home/user/docs
-      - ${UI_TMPFILE_PATH:-${PWD}}:/home/user/ui_cache
-      - ${HF_CACHE:-${HOME}/.cache}:/home/user/.cache
+      - ${TMPFILE_PATH:-${PWD}}:/home/user/ui_cache
       - ${PROMPT_PATH:-${PWD}}:/templates/custom
+    restart: always
     ports:
       - ${PIPELINE_SERVICE_PORT:-16010}:${PIPELINE_SERVICE_PORT:-16010}
     devices:
       - /dev/dri:/dev/dri
+      - ${ACCEL_DEV:-/dev/dri:/dev/dri}
     group_add:
       - ${VIDEOGROUPID:-44}
       - ${RENDERGROUPID:-109}
@@ -36,11 +122,12 @@ services:
       MEGA_SERVICE_HOST_IP: ${MEGA_SERVICE_HOST_IP:-${HOST_IP}}
       PIPELINE_SERVICE_PORT: ${PIPELINE_SERVICE_PORT:-16010}
       PIPELINE_SERVICE_HOST_IP: ${PIPELINE_SERVICE_HOST_IP:-${HOST_IP}}
+    restart: always
     ports:
       - ${MEGA_SERVICE_PORT:-16011}:${MEGA_SERVICE_PORT:-16011}
     depends_on:
-      - server
-  ui:
+      - edgecraftrag-server
+  edgecraftrag-ui:
     image: ${REGISTRY:-opea}/edgecraftrag-ui:${TAG:-latest}
     container_name: edgecraftrag-ui
     environment:
@@ -54,41 +141,151 @@ services:
       UI_SERVICE_PORT: ${UI_SERVICE_PORT:-8082}
       UI_SERVICE_HOST_IP: ${UI_SERVICE_HOST_IP:-0.0.0.0}
     volumes:
-      - ${UI_TMPFILE_PATH:-${PWD}}:/home/user/ui_cache
+      - ${TMPFILE_PATH:-${PWD}}:/home/user/ui_cache
+    restart: always
     ports:
       - ${UI_SERVICE_PORT:-8082}:${UI_SERVICE_PORT:-8082}
-    restart: always
     depends_on:
-      - server
+      - edgecraftrag-server
       - ecrag
-  # vllm-openvino-server:
-  #   container_name: vllm-openvino-server
-  #   image: opea/vllm-arc:latest
-  #   ports:
-  #     - ${VLLM_SERVICE_PORT:-8008}:80
-  #   environment:
-  #     HTTPS_PROXY: ${https_proxy}
-  #     HTTP_PROXY: ${https_proxy}
-  #     VLLM_OPENVINO_DEVICE: GPU
-  #     HF_ENDPOINT: ${HF_ENDPOINT}
-  #     HF_TOKEN: ${HUGGINGFACEHUB_API_TOKEN}
-  #   volumes:
-  #     - /dev/dri/by-path:/dev/dri/by-path
-  #     - $HOME/.cache/huggingface:/root/.cache/huggingface
-  #   devices:
-  #     - /dev/dri
-  #   group_add:
-  #     - ${VIDEOGROUPID:-44}
-  #     - ${RENDERGROUPID:-109}
-  #   entrypoint: /bin/bash -c "\
-  #     cd / && \
-  #     export VLLM_CPU_KVCACHE_SPACE=50 && \
-  #     export VLLM_OPENVINO_ENABLE_QUANTIZED_WEIGHTS=ON && \
-  #     python3 -m vllm.entrypoints.openai.api_server \
-  #       --model '${LLM_MODEL}' \
-  #       --max_model_len=1024 \
-  #       --host 0.0.0.0 \
-  #       --port 80"
+  llm-serving-xpu-b60:
+    container_name: ipex-serving-xpu-container
+    image: intel/llm-scaler-vllm:0.11.1-b7
+    privileged: true
+    restart: always
+    ports:
+      - ${VLLM_SERVICE_PORT_B60:-8086}:${VLLM_SERVICE_PORT_B60:-8086}
+    volumes:
+      - ${MODEL_PATH-${PWD}}:/workspace/vllm/models
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      DTYPE: ${DTYPE:-float16}
+      VLLM_SERVICE_PORT_B60: ${VLLM_SERVICE_PORT_B60:-8086}
+      ZE_AFFINITY_MASK: ${ZE_AFFINITY_MASK:-0}
+      ENFORCE_EAGER: ${ENFORCE_EAGER:-1}
+      TRUST_REMOTE_CODE: ${TRUST_REMOTE_CODE:-1}
+      DISABLE_SLIDING_WINDOW: ${DISABLE_SLIDING_WINDOW:-1}
+      GPU_MEMORY_UTIL: ${GPU_MEMORY_UTIL:-0.8}
+      NO_ENABLE_PREFIX_CACHING: ${NO_ENABLE_PREFIX_CACHING:-1}
+      MAX_NUM_BATCHED_TOKENS: ${MAX_NUM_BATCHED_TOKENS:-8192}
+      DISABLE_LOG_REQUESTS: ${DISABLE_LOG_REQUESTS:-1}
+      MAX_MODEL_LEN: ${MAX_MODEL_LEN:-49152}
+      BLOCK_SIZE: ${BLOCK_SIZE:-64}
+      QUANTIZATION: ${QUANTIZATION:-fp8}
+      MAX_NUM_SEQS: ${MAX_NUM_SEQS:-128}
+      TOOL_PARSER: ${TOOL_PARSER:-qwen3_coder}
+      LLM_MODEL: ${LLM_MODEL}
+      TP: ${TP:-1}
+      DP: ${DP:-1}
+    entrypoint:
+      /bin/bash -c "
+      cd  /workspace/vllm/models && source /opt/intel/oneapi/setvars.sh --force &&
+      VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT=1 \
+      TORCH_LLM_ALLREDUCE=1 \
+      VLLM_USE_V1=1 \
+      CCL_ZE_IPC_EXCHANGE=pidfd \
+      VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 \
+      VLLM_WORKER_MULTIPROC_METHOD=spawn \
+      python3 -m vllm.entrypoints.openai.api_server \
+      --model $${LLM_MODEL} \
+      --dtype $${DTYPE} \
+      --enforce-eager \
+      --port $${VLLM_SERVICE_PORT_B60} \
+      --trust-remote-code \
+      --disable-sliding-window \
+      --gpu-memory-util $${GPU_MEMORY_UTIL} \
+      --no-enable-prefix-caching \
+      --max-num-batched-tokens $${MAX_NUM_BATCHED_TOKENS} \
+      --disable-log-requests \
+      --max-model-len $${MAX_MODEL_LEN} \
+      --block-size $${BLOCK_SIZE} \
+      --quantization $${QUANTIZATION} \
+      --max-num-seqs $${MAX_NUM_SEQS} \
+      -tp=$${TP} \
+      -dp=$${DP} \
+      --enable_prefix_caching True \
+      --enable-auto-tool-choice \
+      --tool-call-parser $${TOOL_PARSER}"
+    profiles:
+      - b60
+  ovms-serving:
+    container_name: ovms-serving
+    image: openvino/model_server:latest-gpu
+    restart: always
+    user: ${OVMS_UID:-1000}:${OVMS_GID:-1000}
+    ports:
+      - ${OVMS_SERVICE_PORT:-8000}:8000
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - ${RENDERGROUPID:-109}
+    volumes:
+      - ${MODEL_PATH:-${PWD}}:/models
+    environment:
+      OVMS_REST_PORT: ${OVMS_SERVICE_PORT:-8000}
+      OVMS_SOURCE_MODEL: ${OVMS_SOURCE_MODEL:-OpenVINO/Qwen3-Coder-30B-A3B-Instruct-int4-ov}
+      OVMS_MODEL_NAME: ${OVMS_MODEL_NAME:-OpenVINO/Qwen3-Coder-30B-A3B-Instruct-int4-ov}
+      OVMS_TARGET_DEVICE: ${OVMS_TARGET_DEVICE:-GPU.0}
+      OVMS_TASK: ${OVMS_TASK:-text_generation}
+      OVMS_CACHE_DIR: ${OVMS_CACHE_DIR:-/models/.ov_cache}
+      OVMS_ENABLE_PREFIX_CACHING: ${OVMS_ENABLE_PREFIX_CACHING:-true}
+      OVMS_TOOL_PARSER: ${OVMS_TOOL_PARSER:-qwen3coder}
+      OVMS_ENABLE_TOOL_GUIDED_GENERATION: ${OVMS_ENABLE_TOOL_GUIDED_GENERATION:-true}
+      OVMS_MAX_NUM_BATCHED_TOKENS: ${OVMS_MAX_NUM_BATCHED_TOKENS:-8192}
+    entrypoint:
+      - /bin/bash
+      - -c
+      - >-
+        /ovms/bin/ovms
+        --rest_port $${OVMS_REST_PORT}
+        --source_model $${OVMS_SOURCE_MODEL}
+        --model_repository_path /models
+        --model_name $${OVMS_MODEL_NAME}
+        --target_device $${OVMS_TARGET_DEVICE}
+        --task $${OVMS_TASK}
+        --cache_dir $${OVMS_CACHE_DIR}
+        --enable_prefix_caching $${OVMS_ENABLE_PREFIX_CACHING}
+        --tool_parser $${OVMS_TOOL_PARSER}
+        --enable_tool_guided_generation $${OVMS_ENABLE_TOOL_GUIDED_GENERATION}
+        --max_num_batched_tokens $${OVMS_MAX_NUM_BATCHED_TOKENS}
+    profiles:
+      - ovms
+  llm-serving-xpu-770:
+    container_name: ipex-llm-serving-xpu-770
+    image: intelanalytics/ipex-llm-serving-xpu:0.8.3-b20
+    privileged: true
+    restart: always
+    ports:
+      - ${VLLM_SERVICE_PORT_A770:-8086}:${VLLM_SERVICE_PORT_A770:-8086}
+    group_add:
+      - video
+      - ${VIDEOGROUPID:-44}
+      - ${RENDERGROUPID:-109}
+    volumes:
+      - ${LLM_MODEL_PATH:-${MODEL_PATH}/${LLM_MODEL}}:/llm/models
+    devices:
+      - /dev/dri
+    environment:
+      no_proxy: ${no_proxy}
+      http_proxy: ${http_proxy}
+      https_proxy: ${https_proxy}
+      MODEL_PATH: "/llm/models"
+      SERVED_MODEL_NAME: ${LLM_MODEL}
+      TENSOR_PARALLEL_SIZE: ${TP:-1}
+      MAX_NUM_SEQS: ${MAX_NUM_SEQS:-64}
+      MAX_NUM_BATCHED_TOKENS: ${MAX_NUM_BATCHED_TOKENS:-10240}
+      MAX_MODEL_LEN: ${MAX_MODEL_LEN:-10240}
+      LOAD_IN_LOW_BIT: ${QUANTIZATION:-fp8}
+      CCL_DG2_USM: ${CCL_DG2_USM:-""}
+      PORT: ${VLLM_SERVICE_PORT_A770:-8086}
+      ZE_AFFINITY_MASK: ${ZE_AFFINITY_MASK:-0}
+    shm_size: '32g'
+    entrypoint: /bin/bash -c "\
+      cd /llm && \
+      bash start-vllm-service.sh"
+    profiles:
+      - a770
 networks:
   default:
     driver: bridge

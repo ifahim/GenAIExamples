@@ -2,12 +2,14 @@
 
 # Copyright (C) 2024 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
-pushd "../../../" > /dev/null
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+pushd "$SCRIPT_DIR/../../../" > /dev/null
 source .set_env.sh
 popd > /dev/null
 
-
-export LLM_MODEL_ID="mistralai/Mistral-7B-Instruct-v0.3"
+export host_ip=$(hostname -I | awk '{print $1}')
+export LLM_MODEL_ID="Qwen/Qwen2.5-Coder-7B-Instruct"
 export LLM_ENDPOINT="http://${host_ip}:8008"
 export LLM_COMPONENT_NAME="OpeaTextGenService"
 export NUM_CARDS=1
@@ -22,3 +24,9 @@ export FRONTEND_SERVICE_PORT=5173
 export BACKEND_SERVICE_NAME=codetrans
 export BACKEND_SERVICE_IP=${host_ip}
 export BACKEND_SERVICE_PORT=7777
+
+
+# Set network proxy settings
+export no_proxy="${no_proxy},${HOST_IP},vllm-server,codetrans-xeon-backend-server,codetrans-xeon-ui-server,redis-vector-db,dataprep-redis-server,tei-embedding-serving,tei-embedding-server,retriever-redis,opea_prometheus,grafana,node-exporter,$JAEGER_IP" # Example: no_proxy="localhost, 127.0.0.1, 192.168.1.1"
+export http_proxy=$http_proxy
+export https_proxy=$https_proxy

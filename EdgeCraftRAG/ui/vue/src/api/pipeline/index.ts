@@ -14,13 +14,12 @@ export const getPipelineList = () => {
   return request({
     url: "/v1/settings/pipelines",
     method: "get",
-    showLoading: true,
   });
 };
 
-export const getPipelineDetialByName = (name: String) => {
+export const getPipelineDetailById = (id: String) => {
   return request({
-    url: `/v1/settings/pipelines/${name}/json`,
+    url: `/v1/settings/pipelines/${id}/json`,
     method: "get",
   });
 };
@@ -32,39 +31,39 @@ export const requestPipelineCreate = (data: Object) => {
     data,
     showLoading: true,
     showSuccessMsg: true,
-    successMsg: "Pipeline created successfully !",
+    successMsg: "request.pipeline.createSucc",
   });
 };
 
-export const requestPipelineUpdate = (name: String, data: Object) => {
+export const requestPipelineUpdate = (id: String, data: Object) => {
   return request({
-    url: `/v1/settings/pipelines/${name}`,
+    url: `/v1/settings/pipelines/${id}`,
     method: "patch",
     data,
     showLoading: true,
     showSuccessMsg: true,
-    successMsg: "Pipeline update successfully !",
+    successMsg: "request.pipeline.updateSucc",
   });
 };
 
-export const requestPipelineDelete = (name: String) => {
+export const requestPipelineDelete = (id: String) => {
   return request({
-    url: `/v1/settings/pipelines/${name}`,
+    url: `/v1/settings/pipelines/${id}`,
     method: "delete",
     showLoading: true,
     showSuccessMsg: true,
-    successMsg: "Pipeline deleted successfully !",
+    successMsg: "request.pipeline.deleteSucc",
   });
 };
 
-export const requestPipelineSwitchState = (name: String, data: Object) => {
+export const requestPipelineSwitchState = (id: String, data: Object) => {
   return request({
-    url: `/v1/settings/pipelines/${name}`,
+    url: `/v1/settings/pipelines/${id}`,
     method: "patch",
     data,
     showLoading: true,
     showSuccessMsg: true,
-    successMsg: "Pipeline state switch successful !",
+    successMsg: "request.pipeline.switchSucc",
   });
 };
 
@@ -75,10 +74,11 @@ export const getRunDevice = () => {
   });
 };
 
-export const getModelList = (type: string) => {
+export const getModelList = (type: string, params?: Object) => {
   return request({
     url: `/v1/settings/avail-models/${type}`,
     method: "get",
+    params,
   });
 };
 
@@ -86,6 +86,33 @@ export const getModelWeight = (model_id: string) => {
   return request({
     url: `/v1/settings/weight/${model_id}`,
     method: "get",
+  });
+};
+
+export const requestUrlVerify = (data: Object) => {
+  return request({
+    url: "/v1/check/milvus",
+    method: "post",
+    data,
+    showLoading: true,
+  });
+};
+
+export const requestUrlVllm = (data: Object) => {
+  return request({
+    url: "/v1/check/vllm",
+    method: "post",
+    data,
+    showLoading: true,
+  });
+};
+
+export const requestUrlOvms = (data: Object) => {
+  return request({
+    url: "/v1/check/ovms",
+    method: "post",
+    data,
+    showLoading: true,
   });
 };
 

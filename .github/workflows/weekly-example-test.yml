@@ -14,7 +14,7 @@ on:
 
 env:
   EXAMPLES: ${{ vars.NIGHTLY_RELEASE_EXAMPLES }}
-  NODES: "gaudi,xeon,rocm,arc"
+  NODES: "gaudi,xeon,arc"
 
 jobs:
   get-test-matrix:
@@ -39,12 +39,9 @@ jobs:
       attestations: read
       models: read
       security-events: read
-    strategy:
-      matrix:
-        node: ${{ fromJson(needs.get-test-matrix.outputs.nodes) }}
     uses: ./.github/workflows/_build_comps_base_image.yml
     with:
-      node: ${{ matrix.node }}
+      node: gaudi
 
   run-examples:
     permissions:
@@ -53,15 +50,12 @@ jobs:
       actions: read
       attestations: read
       checks: read
-      deployments: read
       discussions: read
-      issues: read
+      issues: write
       models: read
-      packages: read
-      pages: read
-      pull-requests: read
+      pages: write
+      pull-requests: write
       repository-projects: read
-      statuses: read
       security-events: read
     needs: [get-test-matrix, build-comps-base]
     strategy:

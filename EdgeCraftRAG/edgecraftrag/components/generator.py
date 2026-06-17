@@ -2,30 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-import dataclasses
 import json
 import os
+import time
+import weakref
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
-from comps import GeneratedDoc
-from edgecraftrag.base import BaseComponent, CompType, GeneratorType, NodeParserType
+from comps.cores.proto.api_protocol import ChatCompletionRequest
+from edgecraftrag.base import BaseComponent, CompType, GeneratorType, InferenceType, NodeParserType
+from edgecraftrag.utils import get_prompt_template, resolve_prompt_template_path
+from edgecraftrag.components.agents.utils import build_document_node_block
 from fastapi.responses import StreamingResponse
-from langchain_core.prompts import PromptTemplate
 from llama_index.llms.openai_like import OpenAILike
 from pydantic import model_serializer
 from unstructured.staging.base import elements_from_base64_gzipped_json
-
-DEFAULT_TEMPLATE = """
-<|im_start|>System: You are an AI assistant. Your task is to learn from the following context. Then answer the user's question based on what you learned from the context but not your own knowledge.<|im_end|>
-
-<|im_start|>{context}<|im_end|>
-
-<|im_start|>System: Pay attention to your formatting of response. If you need to reference content from context, try to keep the formatting.<|im_end|>
-<|im_start|>System: Try to summarize from the context, do some reasoning before response, then response. Make sure your response is logically sound and self-consistent.<|im_end|>
-
-<|im_start|>{input}
-"""
 
 
 def extract_urls(text):
@@ -55,11 +47,11 @@ def extract_unstructured_eles(retrieved_nodes=[], text_gen_context=""):
             continue
         metadata = node.node.metadata
         # extract referenced docs
-        if "filename" in metadata:
+        if "file_name" in metadata:
             reference_doc = (
-                metadata["filename"]
+                metadata["file_name"]
                 if "page_number" not in metadata
-                else metadata["filename"] + " --page" + str(metadata["page_number"])
+                else metadata["file_name"] + " --page" + str(metadata["page_number"])
             )
             reference_docs.add(reference_doc)
         # extract hyperlinks in chunk
@@ -80,33 +72,118 @@ def extract_unstructured_eles(retrieved_nodes=[], text_gen_context=""):
         # extract hyperlinks in chunk
         link_urls.extend(extract_urls(text_gen_context))
     unstructured_str = ""
-    if image_paths:
-        unstructured_str += "\n\n参考图片:\n\n"
-        for image_path in image_paths:
-            unstructured_str += f"![]({image_path})"
-    if link_urls:
-        unstructured_str += "\n\n相关链接:\n\n"
-        for link in link_urls:
-            unstructured_str += f"[{link}]({link})\n\n"
     if reference_docs:
-        unstructured_str += "\n\n内容来源:\n\n"
+        unstructured_str += "\n\n --- \n\n### Document Source:\n"
         for reference_doc in reference_docs:
-            unstructured_str += f"{reference_doc}\n\n"
+            unstructured_str += f"- {reference_doc}\n\n"
     return unstructured_str
 
 
-async def stream_generator(llm, prompt_str, unstructured_str):
-    response = llm.stream_complete(prompt_str)
-    for r in response:
-        yield r.delta
-        await asyncio.sleep(0)
-    if unstructured_str:
-        yield unstructured_str
+def build_stream_response(status=None, content=None, error=None):
+    response = {"status": status, "contentType": "text"}
+    if content is not None:
+        response["content"] = content
+    if error is not None:
+        response["error"] = error
+    return response
+
+
+async def local_stream_generator(lock, llm, prompt_str, unstructured_str, benchmark=None, benchmark_index=None):
+    enable_benchmark = benchmark.is_enabled() if benchmark else False
+    start_time = time.perf_counter() if enable_benchmark else None
+    async with lock:
+        if enable_benchmark:
+            response = await llm.astream_complete_with_bench(prompt_str)
+        else:
+            response = await llm.astream_complete(prompt_str)
+        try:
+            async for r in response:
+                yield r.delta or ""
+                await asyncio.sleep(0)
+            if unstructured_str:
+                yield unstructured_str
+            if enable_benchmark:
+                benchmark.update_benchmark_data_genai(benchmark_index, CompType.GENERATOR, time.perf_counter() - start_time, weakref.ref(llm))
+                benchmark.insert_llm_data_genai(benchmark_index, benchmark.cal_input_token_size(prompt_str), weakref.ref(llm))
+        except Exception as e:
+            start_idx = str(e).find("message") + len("message")
+            result_error = str(e)[start_idx:]
+            yield f"code:0000{result_error}"
+
+async def stream_generator(llm, prompt_str, unstructured_str, benchmark=None, benchmark_index=None):
+    enable_benchmark = benchmark.is_enabled() if benchmark else False
+    start_time = time.perf_counter() if enable_benchmark else None
+    response = await llm.astream_complete(prompt_str)
+    try:
+        async for r in response:
+            yield r.delta or ""
+            await asyncio.sleep(0)
+        if unstructured_str:
+            yield unstructured_str
+            await asyncio.sleep(0)
+        if enable_benchmark:
+            benchmark.update_benchmark_data(benchmark_index, CompType.GENERATOR, time.perf_counter() - start_time)
+            benchmark.insert_llm_data(benchmark_index)
+
+    except asyncio.CancelledError as e:
+        response.aclose()
+    except Exception as e:
+        start_idx = str(e).find("message") + len("message")
+        result_error = str(e)[start_idx:]
+        yield f"code:0000{result_error}"
+
+
+def clone_generator(src_generator: BaseComponent, dst_generator_cfg: dict = None):
+    if not dst_generator_cfg:
+        # If no config is provided, do a pure clone.
+        dst_generator_cfg = {"generator_type": src_generator.comp_subtype}
+
+    if "generator_type" not in dst_generator_cfg:
+        return None
+
+    generator_type = dst_generator_cfg.get("generator_type")
+    new_generator = None
+
+    # Prepare shared arguments
+    shared_args = {
+        "llm_model": src_generator.llm,
+        "inference_type": src_generator.inference_type,
+        "vllm_endpoint": src_generator.vllm_endpoint,
+        "ovms_endpoint": getattr(src_generator, "ovms_endpoint", ""),
+    }
+
+    if generator_type == GeneratorType.CHATQNA:
+        if src_generator.comp_subtype == GeneratorType.FREECHAT:
+            # It's not possible to clone a QnAGenerator from a FreeChatGenerator
+            # because there is no prompt info in the source one.
+            return None
+        # For QnAGenerator, we also need prompt-related info
+        qna_args = shared_args.copy()
+        qna_args.update(
+            {
+                "prompt_template_file": src_generator.prompt_template_file,
+                "prompt_content": src_generator.prompt_content,
+            }
+        )
+        new_generator = QnAGenerator(**qna_args)
+    elif generator_type == GeneratorType.FREECHAT:
+        new_generator = FreeChatGenerator(**shared_args)
+
+    return new_generator
 
 
 class QnAGenerator(BaseComponent):
 
-    def __init__(self, llm_model, prompt_template_file, inference_type, **kwargs):
+    def __init__(
+        self,
+        llm_model,
+        prompt_template_file,
+        inference_type,
+        vllm_endpoint,
+        prompt_content,
+        ovms_endpoint="",
+        **kwargs,
+    ):
         BaseComponent.__init__(
             self,
             comp_type=CompType.GENERATOR,
@@ -117,34 +194,81 @@ class QnAGenerator(BaseComponent):
             ("\n\n", "\n"),
             ("\t\n", "\n"),
         )
-
-        if prompt_template_file is None:
-            print("There is no template file, using the default template.")
-            self.prompt = DocumentedContextRagPromptTemplate.from_template(DEFAULT_TEMPLATE)
-        else:
-            safe_root = "/templates"
-            template_path = os.path.normpath(os.path.join(safe_root, prompt_template_file))
-            if not template_path.startswith(safe_root):
-                raise ValueError("Invalid template path")
-            if not os.path.exists(template_path):
-                raise ValueError("Template file not exists")
-            self.prompt = DocumentedContextRagPromptTemplate.from_file(template_path)
-
-        self.llm = llm_model
+        self.enable_think = False
+        self.enable_rag_retrieval = True
+        self.prompt_content = prompt_content
+        self.prompt_template_file = prompt_template_file
         if isinstance(llm_model, str):
             self.model_id = llm_model
+            self.model_path = llm_model
         else:
-            self.model_id = llm_model().model_id
+            llm_instance = llm_model()
+            if llm_instance.model_path is None or llm_instance.model_path == "":
+                self.model_id = llm_instance.model_id
+                if self.inference_type in (InferenceType.VLLM, InferenceType.OVMS):
+                    # Remote inference may not have local model files. Use model id directly
+                    # to avoid invalid absolute-path repo id validation failures.
+                    self.model_path = self.model_id
+                else:
+                    self.model_path = os.path.join("/home/user/models", os.getenv("LLM_MODEL", "Qwen/Qwen3-8B"))
+            else:
+                self.model_id = llm_instance.model_id
+                self.model_path = llm_instance.model_path
+        self.original_template, self.prompt = self.prompt_handler(
+            self.model_path, self.prompt_content, self.prompt_template_file
+        )
+
+        self.llm = llm_model
+        self.vllm_name  = llm_model().model_id if not isinstance(llm_model, str) else llm_model
+        if self.inference_type == InferenceType.LOCAL:
+            self.lock = asyncio.Lock()
+        if self.inference_type == InferenceType.VLLM:
+            if vllm_endpoint == "":
+                vllm_endpoint = os.getenv("vLLM_ENDPOINT", "http://localhost:8086")
+        if self.inference_type == InferenceType.OVMS:
+            if ovms_endpoint == "":
+                ovms_endpoint = os.getenv("OVMS_ENDPOINT", "http://localhost:8000")
+        self.vllm_endpoint = vllm_endpoint
+        self.ovms_endpoint = ovms_endpoint
+
+        if self.inference_type == InferenceType.OVMS:
+            self.remote_endpoint = self.ovms_endpoint
+        else:
+            self.remote_endpoint = self.vllm_endpoint
+
+    def prompt_handler(
+        self, model_path, prompt_content=None, prompt_template_file=None, enable_think=False, enable_rag_retrieval=True
+    ):
+        if prompt_content:
+            return get_prompt_template(model_path, prompt_content, prompt_template_file, enable_think)
+        elif prompt_template_file is None:
+            print("There is no template file, using the default template.")
+            prompt_template = get_prompt_template(model_path, prompt_content, prompt_template_file, enable_think)
+            return prompt_template
+        else:
+            if enable_rag_retrieval:
+                resolve_prompt_template_path(prompt_template_file)
+            else:
+                prompt_content = "### User Guide ###You are a helpful assistant. Please respond to user inquiries with concise and professional answers.### Historical Content ###{chat_history}"
+                return get_prompt_template(model_path, prompt_content, prompt_template_file, enable_think)
+
+            return get_prompt_template(model_path, prompt_content, prompt_template_file, enable_think)
 
     def set_prompt(self, prompt):
         if "{context}" not in prompt:
             prompt += "\n<|im_start|>{context}<|im_end|>"
-        if "{input}" not in prompt:
-            prompt += "\n<|im_start|>{input}"
-        self.prompt = prompt
+        if "{chat_history}" not in prompt:
+            prompt += "\n<|im_start|>{chat_history}"
+        self.prompt_content = prompt
+        self.original_template, self.prompt = self.prompt_handler(
+            self.model_path, self.prompt_content, self.prompt_template_file
+        )
 
     def reset_prompt(self):
-        self.prompt = DocumentedContextRagPromptTemplate.from_template(DEFAULT_TEMPLATE)
+        self.prompt_content = None
+        self.original_template, self.prompt = self.prompt_handler(
+            self.model_path, self.prompt_content, self.prompt_template_file
+        )
 
     def clean_string(self, string):
         ret = string
@@ -152,56 +276,83 @@ class QnAGenerator(BaseComponent):
             ret = ret.replace(*p)
         return ret
 
-    def query_transform(self, chat_request, retrieved_nodes):
+    def query_transform(self, chat_request, retrieved_nodes, sub_questions=None):
         """Generate text_gen_context and prompt_str
         :param chat_request: Request object
         :param retrieved_nodes: List of retrieved nodes
+        :param sub_questions: Optional sub-questions string (safe parameter)
         :return: Generated text_gen_context and prompt_str."""
         text_gen_context = ""
         for n in retrieved_nodes:
-            origin_text = n.node.get_text()
-            text_gen_context += self.clean_string(origin_text.strip())
+            text_gen_context += build_document_node_block(n)
         query = chat_request.messages
-        prompt_str = self.prompt.format(input=query, context=text_gen_context)
+        chat_history = chat_request.input
+        # Modify model think status
+        if chat_request.chat_template_kwargs:
+            change_flag = False
+            if "enable_rag_retrieval" in chat_request.chat_template_kwargs:
+                if self.enable_rag_retrieval != chat_request.chat_template_kwargs["enable_rag_retrieval"]:
+                    self.enable_rag_retrieval = chat_request.chat_template_kwargs["enable_rag_retrieval"]
+                    change_flag = True
+            if "enable_thinking" in chat_request.chat_template_kwargs:
+                if self.enable_think != chat_request.chat_template_kwargs["enable_thinking"]:
+                    self.enable_think = chat_request.chat_template_kwargs["enable_thinking"]
+                    change_flag = True
+            if change_flag:
+                self.original_template, self.prompt = self.prompt_handler(
+                    self.model_path,
+                    self.prompt_content,
+                    self.prompt_template_file,
+                    self.enable_think,
+                    self.enable_rag_retrieval,
+                )
+
+        if sub_questions:
+            final_query = f"{query}\n\n### Sub-questions ###\nThe following list is how you should consider the answer, you MUST follow these steps when responding:\n\n{sub_questions}"
+        else:
+            final_query = query
+        prompt_str = self.prompt.format(input=final_query, chat_history=chat_history, context=text_gen_context)
         return text_gen_context, prompt_str
 
-    def run(self, chat_request, retrieved_nodes, node_parser_type, **kwargs):
+    async def run(self, chat_request, retrieved_nodes, node_parser_type, **kwargs):
         if self.llm() is None:
             # This could happen when User delete all LLMs through RESTful API
             raise ValueError("No LLM available, please load LLM")
         # query transformation
-        text_gen_context, prompt_str = self.query_transform(chat_request, retrieved_nodes)
-        generate_kwargs = dict(
-            temperature=chat_request.temperature,
-            do_sample=chat_request.temperature > 0.0,
-            top_p=chat_request.top_p,
-            top_k=chat_request.top_k,
-            typical_p=chat_request.typical_p,
-            repetition_penalty=chat_request.repetition_penalty,
-        )
-        self.llm().generate_kwargs = generate_kwargs
-        self.llm().max_new_tokens = chat_request.max_tokens
+        benchmark = kwargs.get("benchmark", None)
+        benchmark_index = kwargs.get("benchmark_index", None)
+        sub_questions = kwargs.get("sub_questions", None)
+        text_gen_context, prompt_str = self.query_transform(chat_request, retrieved_nodes, sub_questions=sub_questions)
+        # self.llm().config.update_generation_config(config)
+        self.llm().config.update_generation_config(temperature=chat_request.temperature,top_p=chat_request.top_p, top_k=chat_request.top_k, typical_p=chat_request.typical_p, repetition_penalty=chat_request.repetition_penalty, do_sample=chat_request.temperature > 0.0)
+        self.llm().config.max_new_tokens = chat_request.max_tokens
         unstructured_str = ""
         if node_parser_type == NodeParserType.UNSTRUCTURED:
             unstructured_str = extract_unstructured_eles(retrieved_nodes, text_gen_context)
         if chat_request.stream:
-            return StreamingResponse(
-                stream_generator(self.llm(), prompt_str, unstructured_str),
-                media_type="text/event-stream",
-            )
-        else:
-            return self.llm().complete(prompt_str)
+            # Asynchronous generator
+            async def generator():
+                async for chunk in local_stream_generator(self.lock, self.llm(), prompt_str, unstructured_str, benchmark, benchmark_index):
+                    yield chunk or ""
+                    await asyncio.sleep(0)
 
-    def run_vllm(self, chat_request, retrieved_nodes, node_parser_type, **kwargs):
+            return generator()
+        else:
+            result = self.llm().complete(prompt_str)
+            return result
+
+    async def run_remote(self, chat_request, retrieved_nodes, node_parser_type, **kwargs):
         # query transformation
-        text_gen_context, prompt_str = self.query_transform(chat_request, retrieved_nodes)
-        llm_endpoint = os.getenv("vLLM_ENDPOINT", "http://localhost:8008")
-        model_name = os.getenv("LLM_MODEL", self.model_id)
+        sub_questions = kwargs.get("sub_questions", None)
+        benchmark = kwargs.get("benchmark", None)
+        benchmark_index = kwargs.get("benchmark_index", None)
+        text_gen_context, prompt_str = self.query_transform(chat_request, retrieved_nodes, sub_questions=sub_questions)
+        api_base_suffix = "/v3" if self.inference_type == InferenceType.OVMS else "/v1"
         llm = OpenAILike(
             api_key="fake",
-            api_base=llm_endpoint + "/v1",
+            api_base=self.remote_endpoint.rstrip("/") + api_base_suffix,
             max_tokens=chat_request.max_tokens,
-            model=model_name,
+            model=self.vllm_name,
             top_p=chat_request.top_p,
             top_k=chat_request.top_k,
             temperature=chat_request.temperature,
@@ -212,14 +363,20 @@ class QnAGenerator(BaseComponent):
         if node_parser_type == NodeParserType.UNSTRUCTURED:
             unstructured_str = extract_unstructured_eles(retrieved_nodes, text_gen_context)
         if chat_request.stream:
-            return StreamingResponse(
-                stream_generator(llm, prompt_str, unstructured_str), media_type="text/event-stream"
-            )
-        else:
-            response = llm.complete(prompt_str)
-            response = response.text
 
-            return GeneratedDoc(text=response, prompt=prompt_str)
+            # Asynchronous generator
+            async def generator():
+                async for chunk in stream_generator(llm, prompt_str, unstructured_str, benchmark, benchmark_index):
+                    yield chunk or ""
+                    await asyncio.sleep(0)
+
+            return generator()
+        else:
+            result = await llm.acomplete(prompt_str)
+            return result
+
+    async def run_vllm(self, chat_request, retrieved_nodes, node_parser_type, **kwargs):
+        return await self.run_remote(chat_request, retrieved_nodes, node_parser_type, **kwargs)
 
     @model_serializer
     def ser_model(self):
@@ -228,73 +385,144 @@ class QnAGenerator(BaseComponent):
             "generator_type": self.comp_subtype,
             "inference_type": self.inference_type,
             "model": self.llm(),
+            "vllm_endpoint": self.vllm_endpoint,
+            "ovms_endpoint": self.ovms_endpoint,
         }
         return set
 
 
-@dataclasses.dataclass
-class INSTRUCTIONS:
-    IM_START = "You are an AI assistant that helps users answer questions given a specific context."
-    SUCCINCT = "Ensure your response is succinct"
-    ACCURATE = "Ensure your response is accurate."
-    SUCCINCT_AND_ACCURATE = "Ensure your response is succinct. Try to be accurate if possible."
-    ACCURATE_AND_SUCCINCT = "Ensure your response is accurate. Try to be succinct if possible."
-    NO_RAMBLING = "Avoid posing new questions or self-questioning and answering, and refrain from repeating words in your response."
-    SAY_SOMETHING = "Avoid meaningless answer such a random symbol or blanks."
-    ENCOURAGE = "If you cannot well understand the question, try to translate it into English, and translate the answer back to the language of the question."
-    NO_IDEA = (
-        'If the answer is not discernible, please respond with "Sorry. I have no idea" in the language of the question.'
-    )
-    CLOZE_TEST = """The task is a fill-in-the-blank/cloze test."""
-    NO_MEANINGLESS_SYMBOLS = "Meaningless symbols and ``` should not be included in your response."
-    ADAPT_NATIVE_LANGUAGE = "Please try to think like a person that speak the same language that the question used."
+class FreeChatGenerator(BaseComponent):
 
-
-def _is_cloze(question):
-    return ("()" in question or "（）" in question) and ("填" in question or "fill" in question or "cloze" in question)
-
-
-# depreciated
-def get_instructions(question):
-    # naive pre-retrieval rewrite
-    # cloze
-    if _is_cloze(question):
-        instructions = [
-            INSTRUCTIONS.CLOZE_TEST,
-        ]
-    else:
-        instructions = [
-            INSTRUCTIONS.ACCURATE_AND_SUCCINCT,
-            INSTRUCTIONS.NO_RAMBLING,
-            INSTRUCTIONS.NO_MEANINGLESS_SYMBOLS,
-        ]
-    return ["System: {}".format(_) for _ in instructions]
-
-
-def preprocess_question(question):
-    if _is_cloze(question):
-        question = question.replace(" ", "").replace("（", "(").replace("）", ")")
-        # .replace("()", " <|blank|> ")
-        ret = "User: Please finish the following fill-in-the-blank question marked by $$$ at the beginning and end. Make sure all the () are filled.\n$$$\n{}\n$$$\nAssistant: ".format(
-            question
+    def __init__(self, llm_model, inference_type, vllm_endpoint, ovms_endpoint="", **kwargs):
+        BaseComponent.__init__(
+            self,
+            comp_type=CompType.GENERATOR,
+            comp_subtype=GeneratorType.FREECHAT,
         )
-    else:
-        ret = "User: {}\nAssistant: 从上下文提供的信息中可以知道，".format(question)
-    return ret
-
-
-class DocumentedContextRagPromptTemplate(PromptTemplate):
-
-    def format(self, **kwargs) -> str:
-        # context = '\n'.join([clean_string(f"{_.page_content}".strip()) for i, _ in enumerate(kwargs["context"])])
-        context = kwargs["context"]
-        question = kwargs["input"]
-        preprocessed_question = preprocess_question(question)
-        if "instructions" in self.template:
-            instructions = get_instructions(question)
-            prompt_str = self.template.format(
-                context=context, instructions="\n".join(instructions), input=preprocessed_question
-            )
+        self.inference_type = inference_type
+        self.prompt_content = ""
+        self.prompt_template_file = ""
+        self._REPLACE_PAIRS = (
+            ("\n\n", "\n"),
+            ("\t\n", "\n"),
+        )
+        self.enable_think = False
+        if isinstance(llm_model, str):
+            self.model_id = llm_model
+            self.model_path = llm_model
         else:
-            prompt_str = self.template.format(context=context, input=preprocessed_question)
-        return prompt_str
+            llm_instance = llm_model()
+            if llm_instance.model_path is None or llm_instance.model_path == "":
+                self.model_id = llm_instance.model_id
+                self.model_path = os.path.join("/home/user/models", os.getenv("LLM_MODEL", "Qwen/Qwen3-8B"))
+            else:
+                self.model_id = llm_instance.model_id
+                self.model_path = llm_instance.model_path
+
+        self.llm = llm_model
+        self.vllm_name = llm_model().model_id if not isinstance(llm_model, str) else llm_model
+        if self.inference_type == InferenceType.LOCAL:
+            self.lock = asyncio.Lock()
+        if self.inference_type == InferenceType.VLLM:
+            if vllm_endpoint == "":
+                vllm_endpoint = os.getenv("vLLM_ENDPOINT", "http://localhost:8086")
+        if self.inference_type == InferenceType.OVMS:
+            if ovms_endpoint == "":
+                ovms_endpoint = os.getenv("OVMS_ENDPOINT", "http://localhost:8000")
+        self.vllm_endpoint = vllm_endpoint
+        self.ovms_endpoint = ovms_endpoint
+
+        if self.inference_type == InferenceType.OVMS:
+            self.remote_endpoint = self.ovms_endpoint
+        else:
+            self.remote_endpoint = self.vllm_endpoint
+
+    async def run(self, chat_request, retrieved_nodes, node_parser_type, **kwargs):
+        if self.inference_type == InferenceType.LOCAL:
+            response = await self.run_local(chat_request, retrieved_nodes, node_parser_type, **kwargs)
+        elif self.inference_type in (InferenceType.VLLM, InferenceType.OVMS):
+            response = await self.run_remote(chat_request, retrieved_nodes, node_parser_type, **kwargs)
+        else:
+            raise ValueError("LLM inference_type not supported")
+        return response
+
+    async def run_local(self, chat_request, retrieved_nodes, node_parser_type, **kwargs):
+        if self.llm() is None:
+            # This could happen when User delete all LLMs through RESTful API
+            raise ValueError("No LLM available, please load LLM")
+        generate_kwargs = dict(
+            temperature=chat_request.temperature,
+            do_sample=chat_request.temperature > 0.0,
+            top_p=chat_request.top_p,
+            top_k=chat_request.top_k,
+            typical_p=chat_request.typical_p,
+            repetition_penalty=chat_request.repetition_penalty,
+        )
+        self.llm().generate_kwargs = generate_kwargs
+        self.llm().max_new_tokens = chat_request.max_tokens
+        prompt_str = chatcompletion_to_chatml(chat_request)
+        if chat_request.stream:
+
+            # Asynchronous generator
+            async def generator():
+                async for chunk in local_stream_generator(self.lock, self.llm(), prompt_str, ""):
+                    yield chunk or ""
+                    await asyncio.sleep(0)
+
+            return generator()
+        else:
+            result = self.llm().complete(prompt_str)
+            return result
+
+    async def run_remote(self, chat_request, retrieved_nodes, node_parser_type, **kwargs):
+        api_base_suffix = "/v3" if self.inference_type == InferenceType.OVMS else "/v1"
+        llm = OpenAILike(
+            api_key="fake",
+            api_base=self.remote_endpoint.rstrip("/") + api_base_suffix,
+            max_tokens=chat_request.max_tokens,
+            model=self.vllm_name,
+            top_p=chat_request.top_p,
+            top_k=chat_request.top_k,
+            temperature=chat_request.temperature,
+            streaming=chat_request.stream,
+            repetition_penalty=chat_request.repetition_penalty,
+        )
+        prompt_str = chatcompletion_to_chatml(chat_request)
+        if chat_request.stream:
+
+            # Asynchronous generator
+            async def generator():
+                gen = await llm.astream_complete(prompt_str)
+                async for chunk in gen:
+                    yield chunk.delta or ""
+                    await asyncio.sleep(0)
+
+            return generator()
+        else:
+            result = await llm.acomplete(prompt_str)
+            return str(result)
+
+    async def run_vllm(self, chat_request, retrieved_nodes, node_parser_type, **kwargs):
+        return await self.run_remote(chat_request, retrieved_nodes, node_parser_type, **kwargs)
+
+    @model_serializer
+    def ser_model(self):
+        set = {
+            "idx": self.idx,
+            "generator_type": self.comp_subtype,
+            "inference_type": self.inference_type,
+            "model": self.llm(),
+            "vllm_endpoint": self.vllm_endpoint,
+            "ovms_endpoint": self.ovms_endpoint,
+        }
+        return set
+
+
+def chatcompletion_to_chatml(request: ChatCompletionRequest) -> str:
+    """Convert a ChatCompletionRequest dict to a ChatML-formatted string."""
+    chatml = ""
+    for msg in request.messages:
+        chatml += f"<|im_start|>{msg.get('role', '')}\n{msg.get('content', '')}<|im_end|>\n"
+    # start generation from assistant role
+    chatml += "<|im_start|>assistant\n"
+    return chatml

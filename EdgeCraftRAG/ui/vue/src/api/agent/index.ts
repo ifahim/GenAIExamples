@@ -1,0 +1,75 @@
+// Copyright (C) 2025 Intel Corporation
+// SPDX-License-Identifier: Apache-2.0
+
+import request from "../request";
+
+export const getAgentList = () => {
+  return request({
+    url: "/v1/agents",
+    method: "get",
+  });
+};
+
+export const getAgentDetailByName = (name: String) => {
+  return request({
+    url: `/v1/agents/${name}`,
+    method: "get",
+  });
+};
+
+export const getFreechatList = (params: Object) => {
+  return request({
+    url: "/v1/settings/pipelines",
+    method: "get",
+    params,
+  });
+};
+
+export const requestAgentCreate = (data: Object) => {
+  return request({
+    url: "/v1/agents",
+    method: "post",
+    data,
+    showLoading: true,
+    showSuccessMsg: true,
+    successMsg: "request.agent.createSucc",
+  });
+};
+export const requestAgentUpdate = (name: String, data: Object) => {
+  return request({
+    url: `/v1/agents/${name}`,
+    method: "patch",
+    data,
+    showLoading: true,
+    showSuccessMsg: true,
+    successMsg: "request.agent.updateSucc",
+  });
+};
+
+export const requestAgentDelete = (name: String) => {
+  return request({
+    url: `/v1/agents/${name}`,
+    method: "delete",
+    showLoading: true,
+    showSuccessMsg: true,
+    successMsg: "request.agent.deleteSucc",
+  });
+};
+
+export const requestAgentSetActive = (name: String, active: boolean) => {
+  return request({
+    url: `/v1/agents/${name}/active`,
+    method: "patch",
+    data: { active },
+    showLoading: true,
+    showSuccessMsg: true,
+    successMsg: active ? "request.agent.activateSucc" : "request.agent.deactivateSucc",
+  });
+};
+
+export const getAgentConfigs = (type: String) => {
+  return request({
+    url: `/v1/agents/configs/${type}`,
+    method: "get",
+  });
+};

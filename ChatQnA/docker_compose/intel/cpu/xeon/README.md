@@ -45,7 +45,7 @@ To set up environment variables for deploying ChatQnA services, set up some para
 
 ```
 export host_ip="External_Public_IP"           #ip address of the node
-export HUGGINGFACEHUB_API_TOKEN="Your_Huggingface_API_Token"
+export HF_TOKEN="Your_Huggingface_API_Token"
 export http_proxy="Your_HTTP_Proxy"           #http proxy if any
 export https_proxy="Your_HTTPs_Proxy"         #https proxy if any
 export no_proxy=localhost,127.0.0.1,$host_ip  #additional no proxies if needed
@@ -71,6 +71,13 @@ CPU example with Open Telemetry feature:
 ```bash
 ./grafana/dashboards/download_opea_dashboard.sh
 docker compose -f compose.yaml -f compose.telemetry.yaml up -d
+```
+
+To enable Xeon Optimization like AMX or Tensor Parallel for vLLM, compose.perf.yaml file need to be merged along with default compose.yaml file.  
+CPU example with optimized vLLM feature:
+
+```bash
+docker compose -f compose.yaml -f compose.perf.yaml up -d
 ```
 
 **Note**: developers should build docker image from source when:
@@ -147,6 +154,7 @@ In the context of deploying a ChatQnA pipeline on an Intel® Xeon® platform, we
 | File                                                         | Description                                                                                                                                                           |
 | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [compose.yaml](./compose.yaml)                               | Default compose file using vllm as serving framework and redis as vector database                                                                                     |
+| [compose_remote.yaml](./compose_remote.yaml)                 | Default compose file using remote inference endpoints and redis as vector database                                                                                    |
 | [compose_milvus.yaml](./compose_milvus.yaml)                 | Uses Milvus as the vector database. All other configurations remain the same as the default                                                                           |
 | [compose_pinecone.yaml](./compose_pinecone.yaml)             | Uses Pinecone as the vector database. All other configurations remain the same as the default. For more details, refer to [README_pinecone.md](./README_pinecone.md). |
 | [compose_qdrant.yaml](./compose_qdrant.yaml)                 | Uses Qdrant as the vector database. All other configurations remain the same as the default. For more details, refer to [README_qdrant.md](./README_qdrant.md).       |
@@ -158,9 +166,31 @@ In the context of deploying a ChatQnA pipeline on an Intel® Xeon® platform, we
 | [compose_tgi.telemetry.yaml](./compose_tgi.telemetry.yaml)   | Helper file for telemetry features for tgi. Can be used along with any compose files that serves tgi                                                                  |
 | [compose_mariadb.yaml](./compose_mariadb.yaml)               | Uses MariaDB Server as the vector database. All other configurations remain the same as the default                                                                   |
 
+### Running LLM models with remote endpoints
+
+When models are deployed on a remote server, a base URL and an API key are required to access them. To set up a remote server and acquire the base URL and API key, refer to [Intel® AI for Enterprise Inference](https://www.intel.com/content/www/us/en/developer/topic-technology/artificial-intelligence/enterprise-inference.html) offerings.
+
+Set the following environment variables.
+
+- `REMOTE_ENDPOINT` is the HTTPS endpoint of the remote server with the model of choice (i.e. https://api.example.com). **Note:** If the API for the models does not use LiteLLM, the second part of the model card needs to be appended to the URL. For example, set `REMOTE_ENDPOINT` to https://api.example.com/Llama-3.3-70B-Instruct if the model card is `meta-llama/Llama-3.3-70B-Instruct`.
+- `API_KEY` is the access token or key to access the model(s) on the server.
+- `LLM_MODEL_ID` is the model card which may need to be overwritten depending on what it is set to `set_env.sh`.
+
+```bash
+export REMOTE_ENDPOINT=<https-endpoint-of-remote-server>
+export API_KEY=<your-api-key>
+export LLM_MODEL_ID=<model-card>
+```
+
+After setting these environment variables, run `docker compose` with `compose_remote.yaml`:
+
+```bash
+docker compose -f compose_remote.yaml up -d
+```
+
 ## ChatQnA with Conversational UI (Optional)
 
-To access the Conversational UI (react based) frontend, modify the UI service in the `compose` file used to deploy. Replace `chaqna-xeon-ui-server` service with the `chatqna-xeon-conversation-ui-server` service as per the config below:
+To access the Conversational UI (react based) frontend, modify the UI service in the `compose` file used to deploy. Replace `chatqna-xeon-ui-server` service with the `chatqna-xeon-conversation-ui-server` service as per the config below:
 
 ```yaml
 chatqna-xeon-conversation-ui-server:
@@ -172,7 +202,7 @@ chatqna-xeon-conversation-ui-server:
   ports:
     - "5174:80"
   depends_on:
-    - chaqna-xeon-backend-server
+    - chatqna-xeon-backend-server
   ipc: host
   restart: always
 ```
@@ -180,7 +210,7 @@ chatqna-xeon-conversation-ui-server:
 Once the services are up, open the following URL in the browser: http://{host_ip}:5174. By default, the UI runs on port 80 internally. If the developer prefers to use a different host port to access the frontend, it can be modified by port mapping in the `compose.yaml` file as shown below:
 
 ```yaml
-  chaqna-gaudi-conversation-ui-server:
+  chatqna-gaudi-conversation-ui-server:
     image: opea/chatqna-conversation-ui:latest
     ...
     ports:

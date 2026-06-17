@@ -8,13 +8,13 @@ export const routeList = [
     path: "/",
     name: "Main",
     component: Layout,
-    redirect: "/pipeline",
+    redirect: "/chatbot",
     children: [
       {
-        path: "/pipeline",
-        name: "Pipeline",
-        component: () => import("@/views/pipeline/index.vue"),
-        meta: { title: "Pipeline" },
+        path: "/settings",
+        name: "Settings",
+        component: () => import("@/views/settings/index.vue"),
+        meta: { title: "Settings" },
       },
       {
         path: "/chatbot",

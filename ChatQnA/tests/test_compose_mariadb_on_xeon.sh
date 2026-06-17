@@ -23,15 +23,9 @@ function build_docker_images() {
     echo "GenAIComps test commit is $(git rev-parse HEAD)"
     docker build --no-cache -t ${REGISTRY}/comps-base:${TAG} --build-arg https_proxy=$https_proxy --build-arg http_proxy=$http_proxy -f Dockerfile .
     popd && sleep 1s
-    git clone https://github.com/vllm-project/vllm.git && cd vllm
-    VLLM_VER="v0.8.3"
-    echo "Check out vLLM tag ${VLLM_VER}"
-    git checkout ${VLLM_VER} &> /dev/null
-    # make sure NOT change the pwd
-    cd ../
 
     echo "Build all the images with --no-cache, check docker_image_build.log for details..."
-    service_list="chatqna chatqna-ui dataprep retriever vllm nginx"
+    service_list="chatqna chatqna-ui dataprep retriever nginx"
     docker compose -f build.yaml build ${service_list} --no-cache > ${LOG_PATH}/docker_image_build.log
 
     docker images && sleep 1s
@@ -40,10 +34,11 @@ function build_docker_images() {
 function start_services() {
     cd $WORKPATH/docker_compose/intel/cpu/xeon
     export MARIADB_PASSWORD="test"
+    export no_proxy="localhost,127.0.0.1,$ip_address"
     source set_env_mariadb.sh
 
     # Start Docker Containers
-    docker compose -f compose_mariadb.yaml up -d > ${LOG_PATH}/start_services_with_compose.log
+    docker compose -f compose_mariadb.yaml up -d --quiet-pull > ${LOG_PATH}/start_services_with_compose.log
     n=0
     until [[ "$n" -ge 100 ]]; do
         docker logs vllm-service > ${LOG_PATH}/vllm_service_start.log 2>&1

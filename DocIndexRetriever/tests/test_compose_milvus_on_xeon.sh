@@ -9,6 +9,7 @@ echo "REGISTRY=IMAGE_REPO=${IMAGE_REPO}"
 echo "TAG=IMAGE_TAG=${IMAGE_TAG}"
 export REGISTRY=${IMAGE_REPO}
 export TAG=${IMAGE_TAG}
+export MODEL_CACHE=${model_cache:-"./data"}
 
 WORKPATH=$(dirname "$PWD")
 LOG_PATH="$WORKPATH/tests"
@@ -34,6 +35,7 @@ function build_docker_images() {
 function start_services() {
     echo "Starting Docker Services...."
     cd $WORKPATH/docker_compose/intel/cpu/xeon
+    export no_proxy="localhost,127.0.0.1,$ip_address"
     source ./set_env.sh
 
     # Start Docker Containers

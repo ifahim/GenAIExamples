@@ -17,7 +17,7 @@ from comps.cores.proto.api_protocol import (
 from comps.cores.proto.docarray import LLMParams
 from fastapi import Request
 from fastapi.responses import StreamingResponse
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 
 logger = CustomLogger("opea_dataprep_microservice")
 logflag = os.getenv("LOGFLAG", False)
@@ -181,7 +181,6 @@ class CodeGenService:
 
         # Handle the chat messages to generate the prompt
         prompt = handle_message(chat_request.messages)
-
         # Get the agents flag from the request data, default to False if not provided
         agents_flag = data.get("agents_flag", False)
 
@@ -200,7 +199,6 @@ class CodeGenService:
 
         # Initialize the initial inputs with the generated prompt
         initial_inputs = {"query": prompt}
-
         # Check if the key index name is provided in the parameters
         if parameters.index_name:
             if agents_flag:
@@ -268,7 +266,6 @@ class CodeGenService:
         result_dict, runtime_graph = await megaservice.schedule(
             initial_inputs=initial_inputs, llm_parameters=parameters
         )
-
         for node, response in result_dict.items():
             # Check if the last microservice in the megaservice is LLM
             if (
@@ -277,10 +274,16 @@ class CodeGenService:
                 and megaservice.services[node].service_type == ServiceType.LLM
             ):
                 return response
-
         # Get the response from the last node in the runtime graph
         last_node = runtime_graph.all_leaves()[-1]
-        response = result_dict[last_node]["text"]
+
+        try:
+            response = result_dict[last_node]["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError):
+            try:
+                response = result_dict[last_node]["text"]
+            except (KeyError, TypeError):
+                response = "Response Error"
         choices = []
         usage = UsageInfo()
         choices.append(

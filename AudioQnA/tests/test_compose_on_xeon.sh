@@ -25,14 +25,8 @@ function build_docker_images() {
     docker build --no-cache -t ${REGISTRY}/comps-base:${TAG} --build-arg https_proxy=$https_proxy --build-arg http_proxy=$http_proxy -f Dockerfile .
     popd && sleep 1s
 
-    git clone https://github.com/vllm-project/vllm.git
-    cd ./vllm/
-    VLLM_VER="v0.8.3"
-    echo "Check out vLLM tag ${VLLM_VER}"
-    git checkout ${VLLM_VER} &> /dev/null && cd ../
-
     echo "Build all the images with --no-cache, check docker_image_build.log for details..."
-    service_list="audioqna audioqna-ui whisper speecht5 vllm"
+    service_list="audioqna audioqna-ui whisper speecht5"
     docker compose -f build.yaml build ${service_list} --no-cache > ${LOG_PATH}/docker_image_build.log
 
     docker images && sleep 1s
@@ -41,11 +35,12 @@ function build_docker_images() {
 function start_services() {
     cd $WORKPATH/docker_compose/intel/cpu/xeon/
     export host_ip=${ip_address}
+    export no_proxy="localhost,127.0.0.1,$ip_address"
     source set_env.sh
     # sed -i "s/backend_address/$ip_address/g" $WORKPATH/ui/svelte/.env
 
     # Start Docker Containers
-    docker compose up -d > ${LOG_PATH}/start_services_with_compose.log
+    docker compose -f compose.yaml -f compose.monitoring.yaml up -d > ${LOG_PATH}/start_services_with_compose.log
     n=0
     until [[ "$n" -ge 200 ]]; do
        docker logs vllm-service > $LOG_PATH/vllm_service_start.log 2>&1
@@ -55,6 +50,7 @@ function start_services() {
        sleep 5s
        n=$((n+1))
     done
+    sleep 1m
 }
 
 
@@ -78,7 +74,7 @@ function validate_megaservice() {
 
 function stop_docker() {
     cd $WORKPATH/docker_compose/intel/cpu/xeon/
-    docker compose -f compose.yaml stop && docker compose rm -f
+    docker compose -f compose.yaml -f compose.monitoring.yaml down
 }
 
 function main() {

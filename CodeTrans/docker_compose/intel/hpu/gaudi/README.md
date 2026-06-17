@@ -41,7 +41,7 @@ To set up environment variables for deploying CodeTrans services, set up some pa
 
 ```bash
 export host_ip="External_Public_IP"           # ip address of the node
-export HUGGINGFACEHUB_API_TOKEN="Your_HuggingFace_API_Token"
+export HF_TOKEN="Your_HuggingFace_API_Token"
 export http_proxy="Your_HTTP_Proxy"           # http proxy if any
 export https_proxy="Your_HTTPs_Proxy"         # https proxy if any
 export no_proxy=localhost,127.0.0.1,$host_ip  # additional no proxies if needed
@@ -54,11 +54,26 @@ Consult the section on [CodeTrans Service configuration](#codetrans-configuratio
 
 ### Deploy the Services Using Docker Compose
 
+#### Option #1
+
 To deploy the CodeTrans services, execute the `docker compose up` command with the appropriate arguments. For a default deployment, execute the command below. It uses the 'compose.yaml' file.
 
 ```bash
 cd hpu/gaudi
 docker compose -f compose.yaml up -d
+```
+
+#### Option #2
+
+> NOTE : To enable monitoring, `compose.monitoring.yaml` file need to be merged along with default `compose.yaml` file.
+
+To deploy with monitoring:
+
+```bash
+cd hpu/gaudi/
+# download grafana dashboard
+bash grafana/dashboards/download_opea_dashboard.sh
+docker compose -f compose.yaml -f compose.monitoring.yaml up -d
 ```
 
 > **Note**: developers should build docker image from source when:
@@ -117,6 +132,15 @@ To stop the containers associated with the deployment, execute the following com
 docker compose -f compose.yaml down
 ```
 
+If monitoring is enabled, execute the following command:
+
+```bash
+cd hpu/gaudi/
+# download grafana dashboard
+bash grafana/dashboards/download_opea_dashboard.sh
+docker compose -f compose.yaml -f compose.monitoring.yaml down
+```
+
 ## Configuration Parameters
 
 Key parameters are configured via environment variables set before running `docker compose up`.
@@ -124,8 +148,8 @@ Key parameters are configured via environment variables set before running `dock
 | Environment Variable                    | Description                                                                                                           | Default (Set Externally)              |
 | :-------------------------------------- | :-------------------------------------------------------------------------------------------------------------------- | :------------------------------------ |
 | `HOST_IP`                               | External IP address of the host machine. **Required.**                                                                | `your_external_ip_address`            |
-| `HUGGINGFACEHUB_API_TOKEN`              | Your Hugging Face Hub token for model access. **Required.**                                                           | `your_huggingface_token`              |
-| `LLM_MODEL_ID`                          | Hugging Face model ID for the CodeTrans LLM (used by TGI/vLLM service). Configured within `compose.yaml` environment. | `mistralai/Mistral-7B-Instruct-v0.3`  |
+| `HF_TOKEN`                              | Your Hugging Face Hub token for model access. **Required.**                                                           | `your_huggingface_token`              |
+| `LLM_MODEL_ID`                          | Hugging Face model ID for the CodeTrans LLM (used by TGI/vLLM service). Configured within `compose.yaml` environment. | `Qwen/Qwen2.5-Coder-7B-Instruct`      |
 | `LLM_ENDPOINT`                          | Internal URL for the LLM serving endpoint (used by `codetrans-gaudi-llm-server`). Configured in `compose.yaml`.       | `http://${HOST_IP}:8008`              |
 | `LLM_COMPONENT_NAME`                    | LLM component name for the LLM Microservice.                                                                          | `OpeaTextGenService`                  |
 | `BACKEND_SERVICE_ENDPOINT`              | External URL for the CodeTrans Gateway (MegaService). Derived from `HOST_IP` and port `7778`.                         | `http://${HOST_IP}:7777/v1/codetrans` |

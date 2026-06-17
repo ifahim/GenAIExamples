@@ -7,16 +7,24 @@ export interface Benchmark {
   retriever: string;
 }
 export interface IMessage {
-  author: string;
+  role: string;
   content: string;
+  query?: string;
+  errorMessage?: string;
   benchmark?: Benchmark | undefined;
+}
+export interface ThinkType {
+  enable_thinking?: boolean;
+  enable_rag_retrieval?: boolean;
 }
 export interface ConfigType {
   top_n: number;
+  k: number;
   temperature: number;
   top_p: number;
   top_k: number;
   repetition_penalty: number;
   max_tokens: number;
   stream: boolean;
+  chat_template_kwargs?: ThinkType;
 }

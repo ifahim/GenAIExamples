@@ -5,13 +5,9 @@ name: Image Build
 permissions:
   actions: read
   contents: read
-  checks: write
-  deployments: write
   issues: write
-  packages: write
   pages: write
   pull-requests: write
-  statuses: write
   security-events: read
 on:
   workflow_call:
@@ -65,7 +61,7 @@ jobs:
           echo "checkout ref ${CHECKOUT_REF}"
 
       - name: Checkout out Repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@1e31de5234b9f8995739874a8ce0492dc87873e2
         with:
           ref: ${{ steps.get-checkout-ref.outputs.CHECKOUT_REF }}
           fetch-depth: 0
@@ -73,17 +69,19 @@ jobs:
       - name: Get test matrix
         shell: bash
         id: test-case-matrix
+        env:
+          HARDWARE: ${{ inputs.hardware }}
         run: |
           example_l=$(echo ${{ inputs.example }} | tr '[:upper:]' '[:lower:]')
           cd ${{ github.workspace }}/${{ inputs.example }}/tests
           run_test_cases=""
 
-          if [[ "${{ inputs.hardware }}" == "gaudi"* ]]; then
+          if [[ "$HARDWARE" == "gaudi"* ]]; then
             hardware="gaudi"
-          elif [[ "${{ inputs.hardware }}" == "xeon"* ]]; then
+          elif [[ "$HARDWARE" == "xeon"* ]]; then
             hardware="xeon"
           else
-            hardware="${{ inputs.hardware }}"
+            hardware="$HARDWARE"
           fi
           default_test_case=$(find . -type f -name "test_compose_on_$hardware.sh" | cut -d/ -f2)
           if [ "$default_test_case" ]; then run_test_cases="$default_test_case"; fi
@@ -114,6 +112,13 @@ jobs:
               run_test_cases=$other_test_cases
           fi
 
+          if [[ "$hardware" == "xeon"* ]]; then
+            if [ -f "${{ github.workspace }}/${{ inputs.example }}/tests/test_ui_on_xeon.sh" ]; then
+              run_test_cases="$run_test_cases test_ui_on_xeon.sh";
+            elif [ -f "${{ github.workspace }}/${{ inputs.example }}/tests/test_ui_on_gaudi.sh" ]; then
+              run_test_cases="$run_test_cases test_ui_on_gaudi.sh";
+            fi
+          fi
           test_cases=$(echo $run_test_cases | tr ' ' '\n' | sort -u | jq -R '.' | jq -sc '.')
           echo "test_cases=$test_cases"
           echo "test_cases=$test_cases" >> $GITHUB_OUTPUT
@@ -145,7 +150,7 @@ jobs:
           docker images
 
       - name: Checkout out Repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@1e31de5234b9f8995739874a8ce0492dc87873e2
         with:
           ref: ${{ needs.get-test-case.outputs.CHECKOUT_REF }}
           fetch-depth: 0
@@ -170,8 +175,8 @@ jobs:
       - name: Run test
         shell: bash
         env:
-          HUGGINGFACEHUB_API_TOKEN: ${{ secrets.HUGGINGFACEHUB_API_TOKEN }}
-          HF_TOKEN: ${{ secrets.HUGGINGFACEHUB_API_TOKEN }}
+          HUGGINGFACEHUB_API_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           GOOGLE_CSE_ID: ${{ secrets.GOOGLE_CSE_ID }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           PINECONE_KEY: ${{ secrets.PINECONE_KEY }}
@@ -181,6 +186,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           FINANCIAL_DATASETS_API_KEY: ${{ secrets.FINANCIAL_DATASETS_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           IMAGE_REPO: ${{ inputs.registry }}
           IMAGE_TAG: ${{ inputs.tag }}
           opea_branch: ${{ inputs.opea_branch }}
@@ -237,7 +243,7 @@ jobs:
 
       - name: Publish pipeline artifact
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@c7d193f32edcb7bfad88892161225aeda64e9392
         with:
           name: ${{ inputs.hardware }}_${{ inputs.example }}_${{ matrix.test_case }}
           path: ${{ github.workspace }}/${{ inputs.example }}/tests/*.log

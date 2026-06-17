@@ -17,36 +17,37 @@ export const requestChatbotConfig = (data: Object) => {
     data,
     showLoading: true,
     showSuccessMsg: true,
-    successMsg: "Configuration update successful !",
+    successMsg: "request.chatbot.updateSucc",
   });
 };
 
-export const requestFileDelete = (name: String) => {
+export const getBenchmark = () => {
   return request({
-    url: `/v1/data/files/${name}`,
-    method: "delete",
-    showLoading: true,
-    showSuccessMsg: true,
-    successMsg: "File deleted successfully !",
-  });
-};
-
-export const getBenchmark = (name: String) => {
-  return request({
-    url: `/v1/settings/pipelines/${name}/benchmark`,
+    url: `/v1/settings/pipeline/benchmark`,
     method: "get",
   });
 };
 
-export const requestParsingFiles = (data: Object) => {
+export const getHistorySessionList = () => {
   return request({
-    url: `/v1/data`,
-    method: "post",
-    data,
-    showLoading: true,
-    showSuccessMsg: true,
-    successMsg: "Document uploaded and parsed successfully !",
+    url: "/v1/sessions",
+    method: "get",
   });
 };
 
-export const uploadFileUrl = `${import.meta.env.VITE_API_URL}v1/data/file`;
+export const getSessionDetailById = (SessionId: String) => {
+  return request({
+    url: `v1/session/${SessionId}`,
+    method: "get",
+  });
+};
+
+export const requestSessionDelete = (SessionId: String) => {
+  return request({
+    url: `/v1/session/${SessionId}`,
+    method: "delete",
+    showLoading: true,
+    showSuccessMsg: true,
+    successMsg: "request.session.deleteSucc",
+  });
+};

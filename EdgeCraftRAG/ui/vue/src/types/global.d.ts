@@ -107,7 +107,7 @@ declare interface TableType<T = any> {
 }
 
 // Table Pagination
-declare interface paginationType<T = any> {
+declare interface PaginationType<T = any> {
   total: number;
   pageNum: number;
   pageSize: number;
@@ -117,17 +117,23 @@ declare interface paginationType<T = any> {
 // Table Columns
 declare type TableColumns<T = any> = {
   title: string;
-  key?: string;
-  dataIndex: string | string[];
-  width?: string;
-  align?: string;
-  ellipsis?: booleanstring;
-  fixed?: boolean | string;
-  [key: string]: T;
+  key: string;
+  dataIndex?: string | string[];
+  children?: TableColumns[];
+  disabled?: boolean;
+  visible?: boolean;
+  fixed?: string | boolean;
+  minWidth?: number;
+  width?: number;
+  ellipsis?: boolean;
 };
 
 // Dialog
 declare interface DialogType<T = any> {
   visible: boolean;
   [key: string]: T;
+}
+
+declare interface FormRules {
+  [key: string]: RuleObject | RuleObject[];
 }

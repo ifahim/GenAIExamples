@@ -41,7 +41,7 @@ To set up environment variables for deploying CodeTrans services, set up some pa
 
 ```bash
 export host_ip="External_Public_IP"           # ip address of the node
-export HUGGINGFACEHUB_API_TOKEN="Your_HuggingFace_API_Token"
+export HF_TOKEN="Your_HuggingFace_API_Token"
 export http_proxy="Your_HTTP_Proxy"           # http proxy if any
 export https_proxy="Your_HTTPs_Proxy"         # https proxy if any
 export no_proxy=localhost,127.0.0.1,$host_ip  # additional no proxies if needed
@@ -54,11 +54,26 @@ Consult the section on [CodeTrans Service configuration](#codetrans-configuratio
 
 ### Deploy the Services Using Docker Compose
 
+#### Option #1
+
 To deploy the CodeTrans services, execute the `docker compose up` command with the appropriate arguments. For a default deployment, execute the command below. It uses the 'compose.yaml' file.
 
 ```bash
 cd cpu/xeon
 docker compose -f compose.yaml up -d
+```
+
+#### Option #2
+
+> NOTE : To enable monitoring, `compose.monitoring.yaml` file need to be merged along with default `compose.yaml` file.
+
+To deploy with monitoring:
+
+```bash
+cd cpu/xeon/
+# download grafana dashboard
+bash grafana/dashboards/download_opea_dashboard.sh
+docker compose -f compose.yaml -f compose.monitoring.yaml up -d
 ```
 
 > **Note**: developers should build docker image from source when:
@@ -117,6 +132,15 @@ To stop the containers associated with the deployment, execute the following com
 docker compose -f compose.yaml down
 ```
 
+If monitoring is enabled, execute the following command:
+
+```bash
+cd cpu/xeon/
+# download grafana dashboard
+bash grafana/dashboards/download_opea_dashboard.sh
+docker compose -f compose.yaml -f compose.monitoring.yaml down
+```
+
 ## Configuration Parameters
 
 Key parameters are configured via environment variables set before running `docker compose up`.
@@ -124,8 +148,8 @@ Key parameters are configured via environment variables set before running `dock
 | Environment Variable                    | Description                                                                                                           | Default (Set Externally)              |
 | :-------------------------------------- | :-------------------------------------------------------------------------------------------------------------------- | :------------------------------------ |
 | `HOST_IP`                               | External IP address of the host machine. **Required.**                                                                | `your_external_ip_address`            |
-| `HUGGINGFACEHUB_API_TOKEN`              | Your Hugging Face Hub token for model access. **Required.**                                                           | `your_huggingface_token`              |
-| `LLM_MODEL_ID`                          | Hugging Face model ID for the CodeTrans LLM (used by TGI/vLLM service). Configured within `compose.yaml` environment. | `mistralai/Mistral-7B-Instruct-v0.3`  |
+| `HF_TOKEN`                              | Your Hugging Face Hub token for model access. **Required.**                                                           | `your_huggingface_token`              |
+| `LLM_MODEL_ID`                          | Hugging Face model ID for the CodeTrans LLM (used by TGI/vLLM service). Configured within `compose.yaml` environment. | `Qwen/Qwen2.5-Coder-7B-Instruct`      |
 | `LLM_ENDPOINT`                          | Internal URL for the LLM serving endpoint (used by `codetrans-xeon-llm-server`). Configured in `compose.yaml`.        | `http://${HOST_IP}:8008`              |
 | `LLM_COMPONENT_NAME`                    | LLM component name for the LLM Microservice.                                                                          | `OpeaTextGenService`                  |
 | `BACKEND_SERVICE_ENDPOINT`              | External URL for the CodeTrans Gateway (MegaService). Derived from `HOST_IP` and port `7778`.                         | `http://${HOST_IP}:7777/v1/codetrans` |
@@ -137,10 +161,34 @@ Key parameters are configured via environment variables set before running `dock
 
 In the context of deploying a CodeTrans pipeline on an Intel® Xeon® platform, we can pick and choose different large language model serving frameworks. The table below outlines the various configurations that are available as part of the application. These configurations can be used as templates and can be extended to different components available in [GenAIComps](https://github.com/opea-project/GenAIComps.git).
 
-| File                                   | Description                                                                               |
-| -------------------------------------- | ----------------------------------------------------------------------------------------- |
-| [compose.yaml](./compose.yaml)         | Default compose file using vllm as serving framework and redis as vector database         |
-| [compose_tgi.yaml](./compose_tgi.yaml) | The LLM serving framework is TGI. All other configurations remain the same as the default |
+| File                                                 | Description                                                                                                                                                                                                                                                 |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [compose.yaml](./compose.yaml)                       | Default compose file using vllm as serving framework and redis as vector database.                                                                                                                                                                          |
+| [compose_tgi.yaml](./compose_tgi.yaml)               | The LLM serving framework is TGI. All other configurations remain the same as the default.                                                                                                                                                                  |
+| [compose_remote.yaml](./compose_remote.yaml)         | The LLM used is hosted on a remote server and an endpoint is used to access this model. vLLM is the serving framework. Additional environment variables need to be set before running. See [instructions](#running-llm-models-with-remote-endpoints) below. |
+| [compose.monitoring.yaml](./compose.monitoring.yaml) | Helper file for monitoring features. Can be used along with any compose files                                                                                                                                                                               |
+
+### Running LLM models with remote endpoints
+
+When models are deployed on a remote server, a base URL and an API key are required to access them. To set up a remote server and acquire the base URL and API key, refer to [Intel® AI for Enterprise Inference](https://www.intel.com/content/www/us/en/developer/topic-technology/artificial-intelligence/enterprise-inference.html) offerings.
+
+Set the following environment variables.
+
+- `REMOTE_ENDPOINT` is the HTTPS endpoint of the remote server with the model of choice (i.e. https://api.example.com). **Note:** If the API for the models does not use LiteLLM, the second part of the model card needs to be appended to the URL. For example, set `REMOTE_ENDPOINT` to https://api.example.com/Llama-3.3-70B-Instruct if the model card is `meta-llama/Llama-3.3-70B-Instruct`.
+- `API_KEY` is the access token or key to access the model(s) on the server.
+- `LLM_MODEL_ID` is the model card which may need to be overwritten depending on what it is set to in `set_env.sh`.
+
+```bash
+export REMOTE_ENDPOINT=<https-endpoint-of-remote-server>
+export API_KEY=<your-api-key>
+export LLM_MODEL_ID=<model-card>
+```
+
+After setting these environment variables, run `docker compose` with `compose_remote.yaml`:
+
+```bash
+docker compose -f compose_remote.yaml up -d
+```
 
 ## Validate Microservices
 

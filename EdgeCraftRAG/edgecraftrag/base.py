@@ -4,7 +4,7 @@
 import abc
 import uuid
 from enum import Enum
-from typing import Any, Callable, List, Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
@@ -19,7 +19,16 @@ class CompType(str, Enum):
     RETRIEVER = "retriever"
     POSTPROCESSOR = "postprocessor"
     GENERATOR = "generator"
+    QUERYSEARCH = "querysearch"
     FILE = "file"
+    KNOWLEDGE = "knowledge"
+    AGENT = "agent"
+    SESSION = "session"
+
+
+class BenchType(str, Enum):
+
+    CHUNK_NUM = "chunk_num"
 
 
 class ModelType(str, Enum):
@@ -28,6 +37,8 @@ class ModelType(str, Enum):
     RERANKER = "reranker"
     LLM = "llm"
     VLLM = "vllm"
+    OVMS = "ovms"
+    VLLM_EMBEDDING = "vllm_embedding"
 
 
 class FileType(str, Enum):
@@ -44,12 +55,15 @@ class NodeParserType(str, Enum):
     HIERARCHY = "hierarchical"
     SENTENCEWINDOW = "sentencewindow"
     UNSTRUCTURED = "unstructured"
+    KBADMINPARSER = "kbadmin_parser"
 
 
 class IndexerType(str, Enum):
 
     FAISS_VECTOR = "faiss_vector"
     DEFAULT_VECTOR = "vector"
+    MILVUS_VECTOR = "milvus_vector"
+    KBADMIN_INDEXER = "kbadmin_indexer"
 
 
 class RetrieverType(str, Enum):
@@ -57,6 +71,7 @@ class RetrieverType(str, Enum):
     VECTORSIMILARITY = "vectorsimilarity"
     AUTOMERGE = "auto_merge"
     BM25 = "bm25"
+    KBADMIN_RETRIEVER = "kbadmin_retriever"
 
 
 class PostProcessorType(str, Enum):
@@ -68,19 +83,32 @@ class PostProcessorType(str, Enum):
 class GeneratorType(str, Enum):
 
     CHATQNA = "chatqna"
+    FREECHAT = "freechat"
 
 
 class InferenceType(str, Enum):
 
     LOCAL = "local"
     VLLM = "vllm"
+    OVMS = "ovms"
 
 
 class CallbackType(str, Enum):
 
     DATAPREP = "dataprep"
     RETRIEVE = "retrieve"
+    RETRIEVE_POSTPROCESS = "retrieve_postprocess"
+    POSTPROCESS = "postprocess"
+    GENERATE = "generate"
     PIPELINE = "pipeline"
+    RUNAGENT = "run_agent"
+    QUERYSEARCH = "query_search"
+
+
+class AgentType(str, Enum):
+
+    SIMPLE = "simple"
+    DEEPSEARCH = "deep_search"
 
 
 class BaseComponent(BaseModel):
@@ -112,8 +140,18 @@ class BaseMgr:
     def __init__(self):
         self.components = {}
 
-    def add(self, comp: BaseComponent):
+    def add(self, comp: BaseComponent, name: str = None):
+        if name:
+            self.components[name] = comp
+            return True
         self.components[comp.idx] = comp
+
+    def append(self, comp: BaseComponent, name: str = None):
+        key = name if name else comp.idx
+        if key not in self.components:
+            self.components[key] = []
+        self.components[key].append(comp)
+        return True
 
     def get(self, idx: str) -> BaseComponent:
         if idx in self.components:

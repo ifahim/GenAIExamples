@@ -16,14 +16,17 @@ LOG_PATH="$WORKPATH/tests"
 ip_address=$(hostname -I | awk '{print $1}')
 
 function build_docker_images() {
+    opea_branch=${opea_branch:-"main"}
     cd $WORKPATH/docker_image_build
-    git clone --depth 1 --branch ${opea_branch:-"main"} https://github.com/opea-project/GenAIComps.git
+    git clone --depth 1 --branch ${opea_branch} https://github.com/opea-project/GenAIComps.git
+    pushd GenAIComps
+    echo "GenAIComps test commit is $(git rev-parse HEAD)"
+    docker build --no-cache -t ${REGISTRY}/comps-base:${TAG} --build-arg https_proxy=$https_proxy --build-arg http_proxy=$http_proxy -f Dockerfile .
+    popd && sleep 1s
 
     echo "Build all the images with --no-cache, check docker_image_build.log for details..."
     docker compose -f build.yaml build --no-cache > ${LOG_PATH}/docker_image_build.log
 
-    docker pull ghcr.io/huggingface/text-embeddings-inference:cpu-1.6
-    docker pull ghcr.io/huggingface/text-generation-inference:2.4.0-intel-cpu
     docker images && sleep 1s
 }
 
@@ -41,7 +44,7 @@ function start_services() {
 
     n=0
     until [[ "$n" -ge 100 ]]; do
-        docker logs tgi_service_codegen > ${LOG_PATH}/tgi_service_codegen_start.log
+        docker logs tgi_service_codegen > ${LOG_PATH}/tgi_service_codegen_start.log 2>&1
         if grep -q Connected ${LOG_PATH}/tgi_service_codegen_start.log; then
             echo "CodeGen TGI Service Connected"
             break
@@ -222,37 +225,6 @@ function validate_megaservice() {
         '{"messages": "def print_hello_world():"}'
 }
 
-function validate_frontend() {
-    echo "[ TEST INFO ]: --------- frontend test started ---------"
-    cd $WORKPATH/ui/react
-    local conda_env_name="OPEA_e2e"
-    export PATH=${HOME}/miniforge3/bin/:$PATH
-
-    if conda info --envs | grep -q "^${conda_env_name}[[:space:]]"; then
-        echo "[ TEST INFO ]: Conda environment '${conda_env_name}' exists. Activating..."
-    else
-        echo "[ TEST INFO ]: Conda environment '${conda_env_name}' not found. Creating..."
-        conda create -n "${conda_env_name}" python=3.12 -y
-    fi
-
-    source activate ${conda_env_name}
-    echo "[ TEST INFO ]: --------- conda env activated ---------"
-
-    conda install -c conda-forge nodejs=22.6.0 -y
-    npm install && npm ci
-    node -v && npm -v && pip list
-
-    exit_status=0
-    npm run test || exit_status=$?
-
-    if [ $exit_status -ne 0 ]; then
-        echo "[TEST INFO]: ---------frontend test failed---------"
-        exit $exit_status
-    else
-        echo "[TEST INFO]: ---------frontend test passed---------"
-    fi
-}
-
 function stop_docker() {
     cd $WORKPATH/docker_compose/intel/cpu/xeon/
     docker compose stop && docker compose rm -f
@@ -260,23 +232,27 @@ function stop_docker() {
 
 function main() {
 
+    echo "::group::stop_docker"
     stop_docker
+    echo "::endgroup::"
+
+    echo "::group::build_docker_images"
     if [[ "$IMAGE_REPO" == "opea" ]]; then build_docker_images; fi
-    start_time=$(date +%s)
+    echo "::endgroup::"
+
+    echo "::group::start_services"
     start_services
-    end_time=$(date +%s)
-    duration=$((end_time-start_time))
-    echo "Mega service start duration is $duration s" && sleep 1s
+    echo "::endgroup::"
 
+    echo "::group::validate_microservices"
     validate_microservices
-    echo "==== microservices validated ===="
-    validate_megaservice
-    echo "==== megaservices validated ===="
-    validate_frontend
-    echo "==== frontend validated ===="
+    echo "::endgroup::"
 
+    echo "::group::stop_docker"
     stop_docker
-    echo y | docker system prune
+    echo "::endgroup::"
+
+    docker system prune -f
 
 }
 

@@ -43,6 +43,7 @@ class IndexerMgr(BaseMgr):
                         (v.model.model_id_or_path == indin.embedding_model.model_id)
                         or (v.model.model_id_or_path == indin.embedding_model.model_path)
                     )
+                    and v.model.device == indin.embedding_model.device
                 ):
                     return v
         return None

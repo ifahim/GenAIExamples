@@ -34,15 +34,16 @@ function build_docker_images() {
 function start_services() {
     cd $WORKPATH/docker_compose/intel/cpu/xeon/
 
-    export HUGGINGFACEHUB_API_TOKEN=${HUGGINGFACEHUB_API_TOKEN}
+    export HF_TOKEN=${HF_TOKEN}
     export NGINX_PORT=80
     export host_ip=${ip_address}
+    export no_proxy="localhost,127.0.0.1,$ip_address"
     source ./set_env.sh
 
     sed -i "s/backend_address/$ip_address/g" $WORKPATH/ui/svelte/.env
 
     # Start Docker Containers
-    docker compose -f compose_tgi.yaml up -d > ${LOG_PATH}/start_services_with_compose.log
+    docker compose -f compose_tgi.yaml -f compose.monitoring.yaml up -d > ${LOG_PATH}/start_services_with_compose.log
 
     n=0
     until [[ "$n" -ge 200 ]]; do
@@ -153,37 +154,9 @@ function validate_megaservice() {
     }'
 }
 
-function validate_frontend() {
-    cd $WORKPATH/ui/svelte
-    local conda_env_name="OPEA_e2e"
-    export PATH=${HOME}/miniforge3/bin/:$PATH
-    if conda info --envs | grep -q "$conda_env_name"; then
-        echo "$conda_env_name exist!"
-    else
-        conda create -n ${conda_env_name} python=3.12 -y
-    fi
-    source activate ${conda_env_name}
-
-    sed -i "s/localhost/$ip_address/g" playwright.config.ts
-
-    conda install -c conda-forge nodejs=22.6.0 -y
-    npm install && npm ci && npx playwright install --with-deps
-    node -v && npm -v && pip list
-
-    exit_status=0
-    npx playwright test || exit_status=$?
-
-    if [ $exit_status -ne 0 ]; then
-        echo "[TEST INFO]: ---------frontend test failed---------"
-        exit $exit_status
-    else
-        echo "[TEST INFO]: ---------frontend test passed---------"
-    fi
-}
-
 function stop_docker() {
     cd $WORKPATH/docker_compose/intel/cpu/xeon/
-    docker compose -f compose_tgi.yaml down
+    docker compose -f compose_tgi.yaml -f compose.monitoring.yaml down
 }
 
 function main() {

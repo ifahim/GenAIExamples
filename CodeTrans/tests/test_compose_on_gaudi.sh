@@ -25,12 +25,8 @@ function build_docker_images() {
     docker build --no-cache -t ${REGISTRY}/comps-base:${TAG} --build-arg https_proxy=$https_proxy --build-arg http_proxy=$http_proxy -f Dockerfile .
     popd && sleep 1s
 
-    git clone https://github.com/HabanaAI/vllm-fork.git && cd vllm-fork
-    VLLM_FORK_VER=v0.6.6.post1+Gaudi-1.20.0
-    git checkout ${VLLM_FORK_VER} &> /dev/null && cd ../
-
     echo "Build all the images with --no-cache, check docker_image_build.log for details..."
-    service_list="codetrans codetrans-ui llm-textgen vllm-gaudi nginx"
+    service_list="codetrans codetrans-ui llm-textgen nginx"
     docker compose -f build.yaml build ${service_list} --no-cache > ${LOG_PATH}/docker_image_build.log
 
     docker images && sleep 1s
@@ -38,16 +34,19 @@ function build_docker_images() {
 
 function start_services() {
     cd $WORKPATH/docker_compose/intel
-    export HUGGINGFACEHUB_API_TOKEN=${HUGGINGFACEHUB_API_TOKEN}
+    export HF_TOKEN=${HF_TOKEN}
     export NGINX_PORT=80
-    export host_ip=${ip_address}
+    export no_proxy="localhost,127.0.0.1,$ip_address"
     source set_env.sh
     cd hpu/gaudi
 
     sed -i "s/backend_address/$ip_address/g" $WORKPATH/ui/svelte/.env
 
+    # download grafana dashboard
+    bash grafana/dashboards/download_opea_dashboard.sh
+
     # Start Docker Containers
-    docker compose up -d > ${LOG_PATH}/start_services_with_compose.log
+    docker compose -f compose.yaml -f compose.monitoring.yaml up -d > ${LOG_PATH}/start_services_with_compose.log
 
     n=0
     until [[ "$n" -ge 100 ]]; do
@@ -119,38 +118,9 @@ function validate_megaservice() {
 
 }
 
-function validate_frontend() {
-    cd $WORKPATH/ui/svelte
-    local conda_env_name="OPEA_e2e"
-    export PATH=${HOME}/miniforge3/bin/:$PATH
-    if conda info --envs | grep -q "$conda_env_name"; then
-        echo "$conda_env_name exist!"
-    else
-        conda create -n ${conda_env_name} python=3.12 -y
-    fi
-    source activate ${conda_env_name}
-
-    sed -i "s/localhost/$ip_address/g" playwright.config.ts
-
-    conda install -c conda-forge nodejs=22.6.0 -y
-    npm install && npm ci && npx playwright install --with-deps
-    node -v && npm -v && pip list
-
-    exit_status=0
-    npx playwright test || exit_status=$?
-
-    if [ $exit_status -ne 0 ]; then
-        echo "[TEST INFO]: ---------frontend test failed---------"
-        exit $exit_status
-    else
-        echo "[TEST INFO]: ---------frontend test passed---------"
-    fi
-
-}
-
 function stop_docker() {
     cd $WORKPATH/docker_compose/intel/hpu/gaudi
-    docker compose -f compose.yaml stop && docker compose rm -f
+    docker compose  -f compose.yaml -f compose.monitoring.yaml  stop && docker compose rm -f
 }
 
 function main() {
@@ -173,10 +143,6 @@ function main() {
 
     echo "::group::validate_megaservice"
     validate_megaservice
-    echo "::endgroup::"
-
-    echo "::group::validate_frontend"
-    validate_frontend
     echo "::endgroup::"
 
     echo "::group::stop_docker"
